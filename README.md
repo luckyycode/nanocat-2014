@@ -20,3 +20,5 @@ what that stuff got so far:
 7. physically correct fog fx.. 
 8. filmic motion blur 
 9. percentage-closer soft shadows (just like Fallout 4)
+10. quadtree-based terrain LOD
+11. some bits of multiplayer code
