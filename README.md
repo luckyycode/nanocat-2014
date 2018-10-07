@@ -22,3 +22,6 @@ what that stuff got so far:
 9. percentage-closer soft shadows (just like Fallout 4)
 10. quadtree-based terrain LOD
 11. some bits of multiplayer code
+12. cpu-based fft ocean (based on some docs... I don't really remember but it works)
+13. openal sound system
+14. async asset loading
