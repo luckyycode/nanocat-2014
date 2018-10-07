@@ -28,3 +28,7 @@ what that stuff got so far:
 15. dynamic day-night time environment
 16. some basic clouds
 17. superduper basic ui menu stuff
+18. animations
+19. multi-passthru shaders
+20. gpu particle engine
+21. road builder
