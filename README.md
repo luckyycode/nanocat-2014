@@ -25,3 +25,5 @@ what that stuff got so far:
 12. cpu-based fft ocean (based on some docs... I don't really remember but it works)
 13. openal sound system
 14. async asset loading
+15. dynamic day-night time environment
+16. some basic clouds
