@@ -1,0 +1,206 @@
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL composite shader.
+//
+
+#   if defined( USE_PRECISION )
+        precision PRECISION_TYPE float;
+#   endif
+
+
+#   if defined( _VERTEX_ )
+
+layout( location = 0 ) in vec3 model_vertexpos;
+//layout( location = 1 ) in vec2 model_uvs;
+
+noperspective out vec2 UV;
+
+void main()
+{
+    //UV = model_uvs;
+    UV = (model_vertexpos.xy + vec2( 1.0, 1.0 )) / 2.0;
+    gl_Position =  vec4( model_vertexpos, 1.0 );
+}
+
+#endif
+
+#   if defined( _FRAGMENT_ )
+
+//! UV coords.
+noperspective in vec2 UV;
+
+uniform sampler2D renderedTexture;
+uniform sampler2D depthTexture;     //  required for screnspace depth blur
+uniform sampler2D emissiveSampler;  // rgb - lights, a - shadow
+
+//! Render target texture out.
+layout( location = 0 ) out vec4 color;
+
+uniform vec2 vTexelSize = vec2( 1.0 / 640.0, 1.0 / 480.0 );
+
+#define USE_FXAA
+
+#   if defined( USE_FXAA )
+
+#define FXAA_REDUCE_MIN (1.0 / 64.0)
+#define FXAA_REDUCE_MUL (1.0 / 12.0)
+#define FXAA_SPAN_MAX 8.0
+
+/**
+ *  Apply FXAA.
+ */
+void FXAA_Image( inout vec4 color )
+{
+    // FXAA
+    vec3 rgbNW = texture(renderedTexture, UV.xy + (vec2(-1.0,-1.0)) * vTexelSize).xyz;
+    vec3 rgbNE = texture(renderedTexture, UV.xy + (vec2(1.0,-1.0)) * vTexelSize).xyz;
+    vec3 rgbSW = texture(renderedTexture, UV.xy + (vec2(-1.0,1.0)) * vTexelSize).xyz;
+    vec3 rgbSE = texture(renderedTexture, UV.xy + (vec2(1.0,1.0)) * vTexelSize).xyz;
+    vec3 rgbM  = texture(renderedTexture,  UV.xy).xyz;
+    
+    vec3 luma = vec3(0.299, 0.587, 0.114);
+    
+    float lumaNW = dot(rgbNW, luma);
+    float lumaNE = dot(rgbNE, luma);
+    float lumaSW = dot(rgbSW, luma);
+    float lumaSE = dot(rgbSE, luma);
+    float lumaM  = dot(rgbM,  luma);
+    
+    float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
+    float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
+    
+    vec2 dir;
+    dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));
+    dir.y =  ((lumaNW + lumaSW) - (lumaNE + lumaSE));
+    
+    float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * (0.25 * FXAA_REDUCE_MUL),FXAA_REDUCE_MIN);
+    float rcpDirMin = 1.0/(min(abs(dir.x), abs(dir.y)) + dirReduce);
+    
+    dir = min(vec2( FXAA_SPAN_MAX,  FXAA_SPAN_MAX),max(vec2(-FXAA_SPAN_MAX, -FXAA_SPAN_MAX),dir * rcpDirMin)) * vTexelSize;
+    
+    vec3 rgbA = 0.5 * (texture(renderedTexture, UV.xy + dir * (1.0/3.0 - 0.5)).xyz + texture(renderedTexture, UV.xy + dir * (2.0 / 3.0 - 0.5)).xyz);
+    vec3 rgbB = rgbA * 0.5 + 0.25 * (texture(renderedTexture,  UV.xy   + dir *  - 0.5).xyz + texture(renderedTexture,  UV.xy   + dir * 0.5).xyz);
+    
+    float lumaB = dot(rgbB, luma);
+    if((lumaB < lumaMin) || (lumaB > lumaMax)) {
+        color = vec4( rgbA, 1.0 );
+    } else {
+        color = vec4( rgbB, 1.0 );
+    }
+}
+
+#   endif
+
+// x = texel width, y = texel height, z = edge distance
+const float edgeDist = 2.5f;
+const int blur_radius = 4;
+
+const vec2 clipplane = vec2(  0.1, 3000.0f );
+
+// texture offset
+vec4 tex2DOffset( in sampler2D s, vec2 uv, float ox, float oy )
+{
+    return textureLod(s, uv + vec2(ox, oy) * vTexelSize.xy, 0);
+}
+
+// linear depth
+float ld( vec2 UV )
+{
+    float fDepth = textureLod( depthTexture, UV, 0 ).x;
+    return 0.5 * clipplane.x * clipplane.y / ( clipplane.y - fDepth * (clipplane.y - clipplane.x) );
+}
+
+void main()
+{
+//    FXAA_Image(color);
+    color = textureLod(renderedTexture, UV, 0);
+//#define USE_SSDBB
+    
+#   if !defined( USE_SSDBB )
+    // Soft. Shimmering blur sometimes.
+
+    float c0 = tex2DOffset(emissiveSampler, UV.xy,    0.0,    0.0).a;
+    float c1 = tex2DOffset(emissiveSampler, UV.xy, -1.5, -1.5).a;
+    float c2 = tex2DOffset(emissiveSampler, UV.xy,  1.5, -1.5).a;
+    float c3 = tex2DOffset(emissiveSampler, UV.xy, -1.5,  1.5).a;
+    float c4 = tex2DOffset(emissiveSampler, UV.xy,  1.5,  1.5).a;
+    
+    float  d0 = tex2DOffset(emissiveSampler, UV.xy,     0.0,    0.0).a;
+    float  d1 = tex2DOffset(emissiveSampler, UV.xy,  -1.5, -1.5).a;
+    float  d2 = tex2DOffset(emissiveSampler, UV.xy,   1.5, -1.5).a;
+    float  d3 = tex2DOffset(emissiveSampler, UV.xy,  -1.5,  1.5).a;
+    float  d4 = tex2DOffset(emissiveSampler, UV.xy,   1.5,  1.5).a;
+    
+    float  w = 1.0;
+    float c = c0;
+    
+    vec4 diffs = abs(vec4(d1, d2, d3, d4) - d0);
+    vec4 factors = vec4(1.0 - smoothstep(0.0, edgeDist, diffs));
+    
+    w += dot(factors, vec4(1.0));
+    
+    c += c1 * factors.x;
+    c += c2 * factors.y;
+    c += c3 * factors.z;
+    c += c4 * factors.w;
+    
+    c /= w;
+    
+    color.rgb *= c;
+
+#   else  // screenspace depth based blur
+    // Results correct soft blur. No shimmer.
+    
+    float fDepth = ld(UV);
+    
+    float fMultiplier = (float(blur_radius) + 1.0);
+    float shadow = texture(emissiveSampler, UV.st).a * fMultiplier;
+    
+    for( int k = 1; k <= blur_radius; ++k ) {   // skip first step
+        float fStep = float(k);
+        
+        float fScale = (1.0 + float(blur_radius) - fStep );
+        float fNextDepth = ld(UV.st + texel_clipplane.xy * fStep);
+        float fPrevDepth = ld(UV.st - texel_clipplane.xy * fStep);
+    
+        float fPrevDiff = min(1.0, 1.0 / (1.0e-7 + abs(fPrevDepth - fDepth)));
+        float fNextDiff = min(1.0, 1.0 / (1.0e-7 + abs(fNextDepth - fDepth)));
+        
+        // get difference
+        shadow += texture(emissiveSampler, UV.st + texel_clipplane.xy * fStep ).a * fScale * fNextDiff;
+        shadow += texture(emissiveSampler, UV.st - texel_clipplane.xy * fStep ).a * fScale * fPrevDiff;
+        
+        fMultiplier += fScale * (fPrevDiff + fNextDiff);
+    };
+
+    color.rgb *= shadow / fMultiplier;
+    
+#   endif
+}
+#   endif

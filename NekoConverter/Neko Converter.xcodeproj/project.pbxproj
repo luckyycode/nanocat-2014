@@ -1,0 +1,370 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		5DF1E9E91B497EE400DC26B6 /* libstdc++.6.0.9.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DF1E9E61B497EE400DC26B6 /* libstdc++.6.0.9.tbd */; };
+		5DF1E9EA1B497EE400DC26B6 /* libstdc++.6.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DF1E9E71B497EE400DC26B6 /* libstdc++.6.tbd */; };
+		5DF1E9EB1B497EE400DC26B6 /* libstdc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DF1E9E81B497EE400DC26B6 /* libstdc++.tbd */; };
+		7E1AFB3F1AC857EA00747585 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7E1AFB3E1AC857EA00747585 /* main.mm */; };
+		7EA5C4421ADC656200DDB8FA /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7EA5C4411ADC656200DDB8FA /* Cocoa.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7E1AFB391AC857EA00747585 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		5D568C011C468D3D001EA556 /* StringHelper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = StringHelper.h; path = ../../test/Core/String/StringHelper.h; sourceTree = "<group>"; };
+		5D568C021C46B3BC001EA556 /* BitMessage.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = BitMessage.h; path = ../../test/Core/Streams/BitMessage.h; sourceTree = "<group>"; };
+		5D91535F1B2E4CD7000157EE /* environment.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = environment.csv; sourceTree = "<group>"; };
+		5DA6170F1B87489D00186716 /* draw2d.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = draw2d.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		5DE262501B947F8D003DC06C /* FileSystem.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = FileSystem.h; path = ../../test/AssetCommon/FileSystem.h; sourceTree = "<group>"; };
+		5DF1E9E61B497EE400DC26B6 /* libstdc++.6.0.9.tbd */ = {isa = PBXFileReference; lastKnownFileType = text; name = "libstdc++.6.0.9.tbd"; path = "usr/lib/libstdc++.6.0.9.tbd"; sourceTree = SDKROOT; };
+		5DF1E9E71B497EE400DC26B6 /* libstdc++.6.tbd */ = {isa = PBXFileReference; lastKnownFileType = text; name = "libstdc++.6.tbd"; path = "usr/lib/libstdc++.6.tbd"; sourceTree = SDKROOT; };
+		5DF1E9E81B497EE400DC26B6 /* libstdc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = text; name = "libstdc++.tbd"; path = "usr/lib/libstdc++.tbd"; sourceTree = SDKROOT; };
+		5DF7015B1B2A32A400A2AFF0 /* animmodel.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = animmodel.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7E1AFB3B1AC857EA00747585 /* Neko Converter */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "Neko Converter"; sourceTree = BUILT_PRODUCTS_DIR; };
+		7E1AFB3E1AC857EA00747585 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		7E5C3F2D1AF6E45C00958735 /* particlerender.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = particlerender.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7E5C3F2E1AF6E45C00958735 /* particleupdate.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = particleupdate.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7E7258BB1B0A960700287FFA /* envmap.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = envmap.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EA5C4411ADC656200DDB8FA /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
+		7EADCDB41ACC2CA40030C589 /* main.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.csv; sourceTree = "<group>"; };
+		7EADCDB51ACC2CA40030C589 /* config.lua */ = {isa = PBXFileReference; lastKnownFileType = text; path = config.lua; sourceTree = "<group>"; };
+		7EADCDB61ACC2CA40030C589 /* env.lua */ = {isa = PBXFileReference; lastKnownFileType = text; path = env.lua; sourceTree = "<group>"; };
+		7EADCDB71ACC2CA40030C589 /* main.lua */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.lua; sourceTree = "<group>"; };
+		7EADCDB81ACC2CA40030C589 /* materials.lua */ = {isa = PBXFileReference; lastKnownFileType = text; path = materials.lua; sourceTree = "<group>"; };
+		7EADCDB91ACC2CA40030C589 /* player.lua */ = {isa = PBXFileReference; lastKnownFileType = text; path = player.lua; sourceTree = "<group>"; };
+		7EADCDBA1ACC2CA40030C589 /* render.lua */ = {isa = PBXFileReference; lastKnownFileType = text; path = render.lua; sourceTree = "<group>"; };
+		7EADCDBB1ACC2CA40030C589 /* ui.lua */ = {isa = PBXFileReference; lastKnownFileType = text; path = ui.lua; sourceTree = "<group>"; };
+		7EADCDBC1ACC2CA40030C589 /* vec3.lua */ = {isa = PBXFileReference; lastKnownFileType = text; path = vec3.lua; sourceTree = "<group>"; };
+		7EADCDBE1ACC2CA40030C589 /* beautifulgrass.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = beautifulgrass.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EADCDBF1ACC2CA40030C589 /* billboard.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = billboard.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EADCDC01ACC2CA40030C589 /* boat.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = boat.nshdr; sourceTree = "<group>"; };
+		7EADCDC21ACC2CA40030C589 /* dynamic_cubemap.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = dynamic_cubemap.nshdr; sourceTree = "<group>"; };
+		7EADCDC31ACC2CA40030C589 /* font.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = font.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EADCDC41ACC2CA50030C589 /* instanced.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = instanced.nshdr; sourceTree = "<group>"; };
+		7EADCDC51ACC2CA50030C589 /* level.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = level.nshdr; sourceTree = "<group>"; };
+		7EADCDC61ACC2CA50030C589 /* model.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = model.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EADCDC71ACC2CA50030C589 /* oculusvr.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = oculusvr.nshdr; sourceTree = "<group>"; };
+		7EADCDC81ACC2CA50030C589 /* particle.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = particle.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EADCDC91ACC2CA50030C589 /* passthru.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = passthru.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EADCDCA1ACC2CA50030C589 /* pj3 */ = {isa = PBXFileReference; lastKnownFileType = text; path = pj3; sourceTree = "<group>"; };
+		7EADCDCB1ACC2CA50030C589 /* pointlight.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = pointlight.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EADCDCC1ACC2CA50030C589 /* skyscatter.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = skyscatter.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EADCDCD1ACC2CA50030C589 /* terrain.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = terrain.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EADCDCE1ACC2CA50030C589 /* water.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = water.nshdr; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.glsl; };
+		7EC0008D1AFD13CA001D7E4D /* composite.nshdr */ = {isa = PBXFileReference; lastKnownFileType = text; path = composite.nshdr; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		7E1AFB381AC857EA00747585 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5DF1E9E91B497EE400DC26B6 /* libstdc++.6.0.9.tbd in Frameworks */,
+				5DF1E9EA1B497EE400DC26B6 /* libstdc++.6.tbd in Frameworks */,
+				5DF1E9EB1B497EE400DC26B6 /* libstdc++.tbd in Frameworks */,
+				7EA5C4421ADC656200DDB8FA /* Cocoa.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		7E1AFB321AC857EA00747585 = {
+			isa = PBXGroup;
+			children = (
+				5DF1E9E61B497EE400DC26B6 /* libstdc++.6.0.9.tbd */,
+				5DF1E9E71B497EE400DC26B6 /* libstdc++.6.tbd */,
+				5DF1E9E81B497EE400DC26B6 /* libstdc++.tbd */,
+				7EA5C4411ADC656200DDB8FA /* Cocoa.framework */,
+				7E1AFB3D1AC857EA00747585 /* NekoConverter */,
+				7E1AFB3C1AC857EA00747585 /* Products */,
+				7EADCDB11ACC2CA40030C589 /* shared_data */,
+			);
+			sourceTree = "<group>";
+		};
+		7E1AFB3C1AC857EA00747585 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7E1AFB3B1AC857EA00747585 /* Neko Converter */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7E1AFB3D1AC857EA00747585 /* NekoConverter */ = {
+			isa = PBXGroup;
+			children = (
+				5DE262501B947F8D003DC06C /* FileSystem.h */,
+				5D568C011C468D3D001EA556 /* StringHelper.h */,
+				5D568C021C46B3BC001EA556 /* BitMessage.h */,
+				7E2B64911AC93984009E1F7A /* Library References */,
+				7E1AFB3E1AC857EA00747585 /* main.mm */,
+			);
+			path = NekoConverter;
+			sourceTree = "<group>";
+		};
+		7E2B64911AC93984009E1F7A /* Library References */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = "Library References";
+			sourceTree = "<group>";
+		};
+		7EADCDB11ACC2CA40030C589 /* shared_data */ = {
+			isa = PBXGroup;
+			children = (
+				7EADCDB21ACC2CA40030C589 /* scripts */,
+				7EADCDBD1ACC2CA40030C589 /* shaders */,
+			);
+			name = shared_data;
+			path = ../Build/Products/Debug/shared_data;
+			sourceTree = "<group>";
+		};
+		7EADCDB21ACC2CA40030C589 /* scripts */ = {
+			isa = PBXGroup;
+			children = (
+				7EADCDB31ACC2CA40030C589 /* asset_loadout */,
+				7EADCDB51ACC2CA40030C589 /* config.lua */,
+				7EADCDB61ACC2CA40030C589 /* env.lua */,
+				7EADCDB71ACC2CA40030C589 /* main.lua */,
+				7EADCDB81ACC2CA40030C589 /* materials.lua */,
+				7EADCDB91ACC2CA40030C589 /* player.lua */,
+				7EADCDBA1ACC2CA40030C589 /* render.lua */,
+				7EADCDBB1ACC2CA40030C589 /* ui.lua */,
+				7EADCDBC1ACC2CA40030C589 /* vec3.lua */,
+			);
+			path = scripts;
+			sourceTree = "<group>";
+		};
+		7EADCDB31ACC2CA40030C589 /* asset_loadout */ = {
+			isa = PBXGroup;
+			children = (
+				5D91535F1B2E4CD7000157EE /* environment.csv */,
+				7EADCDB41ACC2CA40030C589 /* main.csv */,
+			);
+			path = asset_loadout;
+			sourceTree = "<group>";
+		};
+		7EADCDBD1ACC2CA40030C589 /* shaders */ = {
+			isa = PBXGroup;
+			children = (
+				7EADCDBE1ACC2CA40030C589 /* beautifulgrass.nshdr */,
+				7EADCDBF1ACC2CA40030C589 /* billboard.nshdr */,
+				7EADCDC01ACC2CA40030C589 /* boat.nshdr */,
+				5DA6170F1B87489D00186716 /* draw2d.nshdr */,
+				7EADCDC21ACC2CA40030C589 /* dynamic_cubemap.nshdr */,
+				7EADCDC31ACC2CA40030C589 /* font.nshdr */,
+				7EADCDC41ACC2CA50030C589 /* instanced.nshdr */,
+				7EADCDC51ACC2CA50030C589 /* level.nshdr */,
+				5DF7015B1B2A32A400A2AFF0 /* animmodel.nshdr */,
+				7EADCDC61ACC2CA50030C589 /* model.nshdr */,
+				7E7258BB1B0A960700287FFA /* envmap.nshdr */,
+				7EADCDC71ACC2CA50030C589 /* oculusvr.nshdr */,
+				7EADCDC81ACC2CA50030C589 /* particle.nshdr */,
+				7EADCDC91ACC2CA50030C589 /* passthru.nshdr */,
+				7EADCDCA1ACC2CA50030C589 /* pj3 */,
+				7EADCDCB1ACC2CA50030C589 /* pointlight.nshdr */,
+				7EADCDCC1ACC2CA50030C589 /* skyscatter.nshdr */,
+				7EADCDCD1ACC2CA50030C589 /* terrain.nshdr */,
+				7EADCDCE1ACC2CA50030C589 /* water.nshdr */,
+				7E5C3F2D1AF6E45C00958735 /* particlerender.nshdr */,
+				7E5C3F2E1AF6E45C00958735 /* particleupdate.nshdr */,
+				7EC0008D1AFD13CA001D7E4D /* composite.nshdr */,
+			);
+			path = shaders;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7E1AFB3A1AC857EA00747585 /* Neko Converter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7E1AFB421AC857EA00747585 /* Build configuration list for PBXNativeTarget "Neko Converter" */;
+			buildPhases = (
+				7E1AFB371AC857EA00747585 /* Sources */,
+				7E1AFB381AC857EA00747585 /* Frameworks */,
+				7E1AFB391AC857EA00747585 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Neko Converter";
+			productName = NekoConverter;
+			productReference = 7E1AFB3B1AC857EA00747585 /* Neko Converter */;
+			productType = "com.apple.product-type.tool";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7E1AFB331AC857EA00747585 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 0700;
+				ORGANIZATIONNAME = nekocode;
+				TargetAttributes = {
+					7E1AFB3A1AC857EA00747585 = {
+						CreatedOnToolsVersion = 6.1;
+					};
+				};
+			};
+			buildConfigurationList = 7E1AFB361AC857EA00747585 /* Build configuration list for PBXProject "Neko Converter" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = English;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+			);
+			mainGroup = 7E1AFB321AC857EA00747585;
+			productRefGroup = 7E1AFB3C1AC857EA00747585 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7E1AFB3A1AC857EA00747585 /* Neko Converter */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		7E1AFB371AC857EA00747585 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E1AFB3F1AC857EA00747585 /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		7E1AFB401AC857EA00747585 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 10.10;
+				MTL_ENABLE_DEBUG_INFO = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		7E1AFB411AC857EA00747585 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 10.10;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		7E1AFB431AC857EA00747585 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LIBRARY = "libstdc++";
+				PRODUCT_NAME = "Neko Converter";
+			};
+			name = Debug;
+		};
+		7E1AFB441AC857EA00747585 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LIBRARY = "libstdc++";
+				PRODUCT_NAME = "Neko Converter";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		7E1AFB361AC857EA00747585 /* Build configuration list for PBXProject "Neko Converter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7E1AFB401AC857EA00747585 /* Debug */,
+				7E1AFB411AC857EA00747585 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7E1AFB421AC857EA00747585 /* Build configuration list for PBXNativeTarget "Neko Converter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7E1AFB431AC857EA00747585 /* Debug */,
+				7E1AFB441AC857EA00747585 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 7E1AFB331AC857EA00747585 /* Project object */;
+}

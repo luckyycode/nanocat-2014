@@ -1,0 +1,546 @@
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL temporal anti-aliasing shader.
+//
+
+#   if defined( USE_PRECISION )
+        precision PRECISION_TYPE float;
+#   endif
+
+//#define USE_YCOCG
+
+uniform sampler2D VelocityBuffer;
+uniform sampler2D _VelocityNeighborMax;
+
+uniform vec4 vCorner;// xy = ray to (1,1) corner of unjittered frustum at distance 1
+uniform vec4 vJitterOffset;// xy = current frame, zw = previous
+uniform sampler2D PreviousFrame;
+uniform float fFeedbackMin;
+uniform float fFeedbackMax;
+uniform float fMotionScale;
+uniform vec2 vResolution;
+
+uniform float fTime;
+
+
+
+#   if defined( _VERTEX_ )
+
+layout( location = 0 ) in vec3 model_vertexpos;
+//layout( location = 1 ) in vec2 model_uvs;
+
+noperspective out vec2 UV;
+
+void main()
+{
+    //UV = model_uvs;
+    UV = (model_vertexpos.xy + vec2( 1.0, 1.0 )) / 2.0;
+
+    gl_Position =  vec4( model_vertexpos, 1.0 );
+}
+
+#endif
+
+#   if defined( _FRAGMENT_ )
+
+//! UV coords.
+noperspective in vec2 UV;
+
+uniform sampler2D renderedTexture;
+uniform sampler2D depthTexture;     //  required for screnspace depth blur
+
+uniform mat4 invProjView;
+uniform mat4 prevViewProj;
+
+//! Render target texture out.
+layout( location = 0 ) out vec4 color;
+layout( location = 1 ) out vec4 color2;
+
+const float FLT_EPS = 0.00000001f;
+
+
+// https://software.intel.com/en-us/node/503873
+vec3 RGB_YCoCg(vec3 c)
+{
+    // Y = R/4 + G/2 + B/4
+    // Co = R/2 - B/2
+    // Cg = -R/4 + G/2 - B/4
+    return vec3(
+                  c.x/4.0 + c.y/2.0 + c.z/4.0,
+                  c.x/2.0 - c.z/2.0,
+                  -c.x/4.0 + c.y/2.0 - c.z/4.0
+                  );
+}
+
+// https://software.intel.com/en-us/node/503873
+vec3 YCoCg_RGB(vec3 c)
+{
+    // R = Y + Co - Cg
+    // G = Y + Cg
+    // B = Y - Co - Cg
+    return clamp(vec3(
+                           c.x + c.y - c.z,
+                           c.x + c.z,
+                           c.x - c.y - c.z
+                           ), 0.0, 1.0);
+}
+
+
+vec4 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec4 p, vec4 q)
+{
+#if defined( USE_OPTIMIZATIONS )
+    // note: only clips towards aabb center (but fast!)
+    vec3 p_clip = 0.5 * (aabb_max + aabb_min);
+    vec3 e_clip = 0.5 * (aabb_max - aabb_min);
+    
+    vec4 v_clip = q - vec4(p_clip, p.w);
+    vec3 v_unit = v_clip.xyz / e_clip;
+    vec3 a_unit = abs(v_unit);
+    float ma_unit = max(a_unit.x, max(a_unit.y, a_unit.z));
+    
+    if (ma_unit > 1.0) {
+        return vec4(p_clip, p.w) + v_clip / ma_unit;
+    } else {
+        return q;// point inside aabb
+    }
+#else
+    vec4 r = q - p;
+    vec3 rmax = aabb_max - p.xyz;
+    vec3 rmin = aabb_min - p.xyz;
+    
+    const float eps = FLT_EPS;
+    
+    if (r.x > rmax.x + eps) {
+        r *= (rmax.x / r.x);
+    }
+    
+    if (r.y > rmax.y + eps) {
+        r *= (rmax.y / r.y);
+    }
+    
+    if (r.z > rmax.z + eps) {
+        r *= (rmax.z / r.z);
+    }
+    
+    if (r.x < rmin.x - eps) {
+        r *= (rmin.x / r.x);
+    }
+    
+    if (r.y < rmin.y - eps) {
+        r *= (rmin.y / r.y);
+    }
+    
+    if (r.z < rmin.z - eps) {
+        r *= (rmin.z / r.z);
+    }
+    
+    return p + r;
+#endif
+}
+
+vec3 find_closest_fragment(vec2 uv)
+{
+    vec2 dd = vResolution.xy;
+    vec2 du = vec2(dd.x, 0.0);
+    vec2 dv = vec2(0.0, dd.y);
+    
+    vec3 dtl = vec3(-1, -1, texture(depthTexture, uv - dv - du).x);
+    vec3 dtc = vec3( 0, -1, texture(depthTexture, uv - dv).x);
+    vec3 dtr = vec3( 1, -1, texture(depthTexture, uv - dv + du).x);
+    
+    vec3 dml = vec3(-1,  0, texture(depthTexture, uv - du).x);
+    vec3 dmc = vec3( 0,  0, texture(depthTexture, uv).x);
+    vec3 dmr = vec3( 1,  0, texture(depthTexture, uv + du).x);
+    
+    vec3 dbl = vec3(-1,  1, texture(depthTexture, uv + dv - du).x);
+    vec3 dbc = vec3( 0,  1, texture(depthTexture, uv + dv).x);
+    vec3 dbr = vec3( 1,  1, texture(depthTexture, uv + dv + du).x);
+    
+    vec3 dmin = dtl;
+    if (dmin.z > dtc.z) dmin = dtc;
+    if (dmin.z > dtr.z) dmin = dtr;
+    
+    if (dmin.z > dml.z) dmin = dml;
+    if (dmin.z > dmc.z) dmin = dmc;
+    if (dmin.z > dmr.z) dmin = dmr;
+    
+    if (dmin.z > dbl.z) dmin = dbl;
+    if (dmin.z > dbc.z) dmin = dbc;
+    if (dmin.z > dbr.z) dmin = dbr;
+    
+    return vec3(uv + dd.xy * dmin.xy, dmin.z);
+}
+
+
+vec2 sample_velocity_dilated(in sampler2D tex, vec2 uv, int support)
+{
+    vec2 du = vec2(vResolution.x, 0.0);
+    vec2 dv = vec2(0.0, vResolution.y);
+    vec2 mv = vec2(0.0);
+    float rmv = 0.0;
+    
+    int end = support + 1;
+    for (int i = -support; i != end; i++)
+    {
+        for (int j = -support; j != end; j++)
+        {
+            vec2 v = texture(tex, uv + float(i) * dv + float(j) * du).xy;
+            float rv = dot(v, v);
+            if( rv > rmv ) {
+                mv = v;
+                rmv = rv;
+            }
+        }
+    }
+    
+    return mv;
+}
+
+//====
+//note: normalized random, float=[0;1[
+float PDnrand( vec2 n ) {
+    return fract( sin(dot(n.xy, vec2(12.9898f, 78.233f)))* 43758.5453f );
+}
+
+//====
+//note: signed random, float=[-1;1[
+float PDsrand( vec2 n ) {
+    return PDnrand( n ) * 2.0 - 1.0;
+}
+
+vec4 PDnrand4( vec2 n ) {
+    return fract( sin(dot(n.xy, vec2(12.9898f, 78.233f)))* vec4(43758.5453f, 28001.8384f, 50849.4141f, 12996.89f) );
+}
+
+vec4 PDsrand4(vec2 n ) {
+    return PDnrand4( n ) * vec4(2.0 - 1.0);
+}
+
+vec4 sample_color( in sampler2D tex, vec2 uv )
+{
+#   if defined( USE_YCOCG )
+    vec4 c = texture( tex, uv );
+    return vec4( RGB_YCoCg(c.rgb).rgb, c.a );
+#   else
+    return texture(tex, uv);
+#   endif
+}
+
+vec4 resolve_color(vec4 c)
+{
+#   if defined( USE_YCOCG )
+    return vec4(YCoCg_RGB(c.rgb).rgb, c.a);
+#   else
+    return c;
+#   endif
+}
+
+vec4 sample_color_motion( in sampler2D tex, in vec2 uv, in vec2 ss_vel )
+{
+    vec2 v = 0.5 * ss_vel;
+    const int taps = 3;// on either side!
+    
+    float srand = PDsrand(uv + vec2(fTime, fTime));
+    vec2 vtap = v / float(taps);
+    vec2 pos0 = uv + vtap * (0.5 * srand);
+    vec4 accu = vec4(0.0);
+    float wsum = 0.0;
+    
+    for( int i = -taps; i <= taps; ++i ) {
+        float w = 1.0f;// box
+        //float w = taps - abs(i) + 1;// triangle
+        //float w = 1.0 / (1 + abs(i));// pointy triangle
+        accu += w * texture(tex, pos0 + i * vtap);
+        wsum += w;
+    }
+    
+    return clamp(accu / wsum, 0.0, 1.0);
+}
+
+//#define MINMAX_3X3_ROUNDED
+//#define UNJITTER_COLORSAMPLES
+//#define USE_CLIPPING
+//#define UNJITTER_NEIGHBORHOOD
+
+//#define ZNEAR 0.1
+//#define ZFAR 3000.0
+
+
+/**
+ *  Linearize depth.
+ */
+float ld( in float depth )
+{
+    return (2.0 * ZNEAR) / (ZFAR + ZNEAR - depth * (ZFAR - ZNEAR));
+}
+
+// Converts color to luminance (grayscale)
+float Luminance( in vec3 c )
+{
+    return dot( c, vec3(0.22, 0.707, 0.071) );
+}
+
+
+vec4 temporal_reprojection( in vec2 ss_txc, in vec2 ss_vel, in float vs_dist )
+{
+#if defined( UNJITTER_COLORSAMPLES ) || defined(UNJITTER_NEIGHBORHOOD)
+    vec2 jitter0 = vJitterOffset.xy * vResolution.xy;
+#endif
+    
+    // read texels
+#ifdef UNJITTER_COLORSAMPLES
+    vec4 texel0 = sample_color(renderedTexture, ss_txc - jitter0);
+#else
+    vec4 texel0 = sample_color(renderedTexture, ss_txc);
+#endif
+    vec4 texel1 = sample_color(PreviousFrame, ss_txc - ss_vel);
+    
+    // calc min-max of current neighbourhood
+#ifdef UNJITTER_NEIGHBORHOOD
+    vec2 uv = ss_txc - jitter0;
+#else
+    vec2 uv = ss_txc;
+#endif
+    
+//#if defined( MINMAX_3X3 ) || defined( MINMAX_3X3_ROUNDED )
+    
+    vec2 du = vec2(vResolution.x, 0.0);
+    vec2 dv = vec2(0.0, vResolution.y);
+    
+    vec4 ctl = sample_color(renderedTexture, uv - dv - du);
+    vec4 ctc = sample_color(renderedTexture, uv - dv);
+    vec4 ctr = sample_color(renderedTexture, uv - dv + du);
+    vec4 cml = sample_color(renderedTexture, uv - du);
+    vec4 cmc = sample_color(renderedTexture, uv);
+    vec4 cmr = sample_color(renderedTexture, uv + du);
+    vec4 cbl = sample_color(renderedTexture, uv + dv - du);
+    vec4 cbc = sample_color(renderedTexture, uv + dv);
+    vec4 cbr = sample_color(renderedTexture, uv + dv + du);
+    
+    vec4 cmin = min(ctl, min(ctc, min(ctr, min(cml, min(cmc, min(cmr, min(cbl, min(cbc, cbr))))))));
+    vec4 cmax = max(ctl, max(ctc, max(ctr, max(cml, max(cmc, max(cmr, max(cbl, max(cbc, cbr))))))));
+    
+#if defined( MINMAX_3X3_ROUNDED ) || defined( USE_YCOCG ) || defined( USE_CLIPPING )
+    vec4 cavg = (ctl + ctc + ctr + cml + cmc + cmr + cbl + cbc + cbr) / 9.0;
+#endif
+
+#ifdef MINMAX_3X3_ROUNDED
+    vec4 cmin5 = min(ctc, min(cml, min(cmc, min(cmr, cbc))));
+    vec4 cmax5 = max(ctc, max(cml, max(cmc, max(cmr, cbc))));
+    vec4 cavg5 = (ctc + cml + cmc + cmr + cbc) / 5.0;
+    cmin = 0.5 * (cmin + cmin5);
+    cmax = 0.5 * (cmax + cmax5);
+    cavg = 0.5 * (cavg + cavg5);
+#endif
+    
+//#elif MINMAX_4TAP_VARYING// this is the method used in v2 (PDTemporalReprojection2)
+//    
+//    float _SubpixelThreshold = 0.5;
+//    float _GatherBase = 0.5;
+//    float _GatherSubpixelMotion = 0.1666;
+//    
+//    vec2 texel_vel = ss_vel / vResolution.xy;
+//    float texel_vel_mag = length(texel_vel) * vs_dist;
+//    float k_subpixel_motion = clamp(_SubpixelThreshold / (FLT_EPS + texel_vel_mag), 0.0, 1.0);
+//    float k_min_max_support = _GatherBase + _GatherSubpixelMotion * k_subpixel_motion;
+//    
+//    vec2 ss_offset01 = k_min_max_support * vec2(-vResolution.x, vResolution.y);
+//    vec2 ss_offset11 = k_min_max_support * vec2(vResolution.x, vResolution.y);
+//    vec4 c00 = sample_color(renderedTexture, uv - ss_offset11);
+//    vec4 c10 = sample_color(renderedTexture, uv - ss_offset01);
+//    vec4 c01 = sample_color(renderedTexture, uv + ss_offset01);
+//    vec4 c11 = sample_color(renderedTexture, uv + ss_offset11);
+//    
+//    vec4 cmin = min(c00, min(c10, min(c01, c11)));
+//    vec4 cmax = max(c00, max(c10, max(c01, c11)));
+//    
+//#ifdef USE_CLIPPING
+//    vec4 cavg = (c00 + c10 + c01 + c11) / 4.0;
+//#endif
+ 
+
+//#else// fallback (... should never end up here)
+//    
+//    vec4 cmin = texel0;
+//    vec4 cmax = texel0;
+//    
+//#ifdef USE_YCOCG || USE_CLIPPING
+//    vec4 cavg = texel0;
+//#endif
+//    
+//#endif
+
+    // shrink chroma min-max
+#ifdef USE_YCOCG
+    vec2 chroma_extent = vec2(0.25 * 0.5 * (cmax.r - cmin.r));
+    vec2 chroma_center = texel0.gb;
+    cmin.yz = chroma_center - chroma_extent;
+    cmax.yz = chroma_center + chroma_extent;
+    cavg.yz = chroma_center;
+#endif
+
+    // clamp to neighbourhood of current sample
+#ifdef USE_CLIPPING
+    texel1 = clip_aabb(cmin.xyz, cmax.xyz, clamp(cavg, cmin, cmax), texel1);
+#else
+    texel1 = clamp(texel1, cmin, cmax);
+#endif
+    
+    // feedback weight from unbiased luminance diff (t.lottes)
+#ifdef USE_YCOCG
+    float lum0 = texel0.r;
+    float lum1 = texel1.r;
+#else
+    float lum0 = Luminance(texel0.rgb);
+    float lum1 = Luminance(texel1.rgb);
+#endif
+    float unbiased_diff = abs(lum0 - lum1) / max(lum0, max(lum1, 0.2));
+    float unbiased_weight = 1.0 - unbiased_diff;
+    float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
+    float k_feedback = mix(fFeedbackMin, fFeedbackMax, unbiased_weight_sqr);
+    
+    // output
+    return mix(texel0, texel1, k_feedback);
+}
+
+void main()
+{
+    
+#if defined( UNJITTER_REPROJECTION ) || (defined(USE_MOTION_BLUR) && defined(UNJITTER_COLORSAMPLES))
+    vec2 jitter0 = vJitterOffset.xy * vResolution.xy;
+#endif
+    
+#ifdef UNJITTER_REPROJECTION
+    vec2 uv = UV - jitter0;
+#else
+    vec2 uv = UV;
+#endif
+    
+#ifdef USE_DILATION
+    ////--- 3x3 norm (sucks)
+    //float2 ss_vel = sample_velocity_dilated(VelocityBuffer, uv, 1);
+    //float vs_dist = LinearEyeDepth(tex2D(_CameraDepthTexture, uv).x);
+    
+    ////--- 5 tap nearest (decent)
+    //float2 du = float2(vResolution.x, 0.0);
+    //float2 dv = float2(0.0, vResolution.y);
+    
+    //float2 tl = 1.0 * (-dv - du );
+    //float2 tr = 1.0 * (-dv + du );
+    //float2 bl = 1.0 * ( dv - du );
+    //float2 br = 1.0 * ( dv + du );
+    
+    //float dtl = tex2D(_CameraDepthTexture, uv + tl).x;
+    //float dtr = tex2D(_CameraDepthTexture, uv + tr).x;
+    //float dmc = tex2D(_CameraDepthTexture, uv).x;
+    //float dbl = tex2D(_CameraDepthTexture, uv + bl).x;
+    //float dbr = tex2D(_CameraDepthTexture, uv + br).x;
+    
+    //float dmin = dmc;
+    //float2 dif = 0.0;
+    
+    //if (dtl < dmin) { dmin = dtl; dif = tl; }
+    //if (dtr < dmin) { dmin = dtr; dif = tr; }
+    //if (dbl < dmin) { dmin = dbl; dif = bl; }
+    //if (dbr < dmin) { dmin = dbr; dif = br; }
+    
+    //float2 ss_vel = tex2D(VelocityBuffer, uv + dif).xy;
+    //float vs_dist = LinearEyeDepth(dmin);
+
+    
+    //--- 3x3 nearest (good)
+    vec3 c_frag = find_closest_fragment(uv);
+    
+    // Deferred rendering!
+    float depthScreen = textureLod( depthTexture, UV, 0 ).x;
+    
+   // Scene depth.
+    float depthNDC = depthScreen * 2.0 - 1.0;
+    vec4 projectedPos = vec4( UV * 2.0 - 1.0, depthNDC, 1.0);
+    vec4 sPos = invProjView * projectedPos; // Needs some optimization.
+    //Get current world space position:
+    vec3 current = sPos.xyz / sPos.w;
+    // get previous screen space position:
+    vec4 previous = prevViewProj * vec4(current, 1.0);
+    previous.xyz /= previous.w;
+    previous.xy = previous.xy * 0.5 + 0.5;
+    vec2 ss_vel = (UV - previous.xy);// / 2.0;
+    
+    
+    
+  //  vec2 ss_vel = texture(VelocityBuffer, c_frag.xy).xy;
+//    ss_vel = pow(ss_vel * 2.0 - 1.0, vec2(3.0));
+
+    float vs_dist = ld(c_frag.z);
+#else
+
+    vec2 ss_vel = texture(VelocityBuffer, uv).xy;
+    float vs_dist = ld(texture(depthTexture, uv).x);
+#endif
+    
+    // temporal resolve
+    vec4 color_temporal = temporal_reprojection(UV, ss_vel, vs_dist);
+    
+    // prepare outputs
+    vec4 to_buffer = resolve_color(color_temporal);
+#ifdef USE_MOTION_BLUR
+    
+#ifdef USE_MOTION_BLUR_NEIGHBORMAX
+    ss_vel = fMotionScale * texture(_VelocityNeighborMax, UV).xy;
+#else
+    ss_vel = fMotionScale * ss_vel;
+#endif
+    
+    float vel_mag =  length(ss_vel / vResolution.xy);
+    float vel_trust_full = 2.0;
+    float vel_trust_none = 12.0;
+    float vel_trust_span = vel_trust_none - vel_trust_full;
+    float trust = 1.0 - clamp(vel_mag - vel_trust_full, 0.0, vel_trust_span) / vel_trust_span;
+    
+#ifdef UNJITTER_COLORSAMPLES
+    vec4 color_motion = sample_color_motion(renderedTexture, UV - jitter0, ss_vel);
+#else
+    vec4 color_motion = sample_color_motion(renderedTexture, UV, ss_vel);
+#endif
+    
+    vec4 to_screen = resolve_color(mix(color_motion, color_temporal, trust));
+#else
+    
+    vec4 to_screen = resolve_color(color_temporal);
+#endif
+
+    // add noise
+    vec4 noise4s = PDsrand4(UV + fTime + 0.6959174) / 510.0;
+
+    color = clamp(to_screen + + noise4s, 0.0, 1.0); // to_screen
+    color2 = clamp(to_buffer + noise4s, 0.0,1.0);   // to_buffer
+    //// NOTE: velocity debug
+    //to_screen.g += 100.0 * length(ss_vel);
+    //to_screen = float4(100.0 * abs(ss_vel), 0.0, 0.0);
+}
+#   endif

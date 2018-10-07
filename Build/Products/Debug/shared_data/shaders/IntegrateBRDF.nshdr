@@ -1,0 +1,161 @@
+
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL composite shader.
+//
+
+#ifdef USE_PRECISION
+precision PRECISION_TYPE float;
+#endif
+
+
+#ifdef _VERTEX_
+
+layout( location = 0 ) in vec3 model_vertexpos;
+//layout( location = 1 ) in vec2 model_uvs;
+
+noperspective out vec2 UV;
+
+void main()
+{
+    //UV = model_uvs;
+    UV = (model_vertexpos.xy + vec2( 1.0, 1.0 )) / 2.0;
+    gl_Position =  vec4( model_vertexpos, 1.0 );
+}
+
+#endif
+
+#ifdef _FRAGMENT_
+
+#define PI  3.14159265
+
+noperspective in vec2 UV;
+
+uniform sampler2D renderedTexture;
+layout(location=0)out vec4 color;
+float radicalInverse_VdC(uint bits)
+{
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    
+    return float(bits) * 2.3283064365386963e-10; // / 0x100000000
+}
+
+vec2 Hammersley(uint i, uint n) {
+    return vec2(i/n, radicalInverse_VdC(i));
+}
+
+float V_SmithGGXCorrelated(float NdotL, float NdotV, float alphaG) {
+    // Original formulation of G_SmithGGX Correlated
+    // lambda_v = (-1 + sqrt(alphaG2 * (1 - NdotL2) / NdotL2 + 1)) * 0.5f;
+    // lambda_l = (-1 + sqrt(alphaG2 * (1 - NdotV2) / NdotV2 + 1)) * 0.5f;
+    // G_SmithGGXCorrelated = 1 / (1 + lambda_v + lambda_l);
+    // V_SmithGGXCorrelated = G_SmithGGXCorrelated / (4.0f * NdotL * NdotV);
+    
+    // This is the optimize version
+    float alphaG2 = alphaG * alphaG;
+    // Caution: the "NdotL *" and "NdotV *" are explicitely inversed, this is not a mistake.
+    float Lambda_GGXV = NdotL * sqrt((-NdotV * alphaG2 + NdotV) * NdotV + alphaG2);
+    float Lambda_GGXL = NdotV * sqrt((-NdotL * alphaG2 + NdotL) * NdotL + alphaG2);
+    
+    return 0.5f / (Lambda_GGXV + Lambda_GGXL);
+}
+
+float G_1(float k, float NdV) {
+    return NdV/((NdV)*(1.0-k)+k+0.00001);
+}
+
+float G_Smith(float roughness, float NdV, float NdL) {
+    // remapped roughness, to be used for the geometry term calculations,
+    // per Disney [16], Unreal [3]. N.B. don't do this in IBL
+    //float roughness_remapped = 0.5 + roughness/2.0;
+    float k = roughness * roughness; //pow(roughness + 1.0, 2.0)/8.0;
+    return G_1(k, NdV) * G_1(k, NdL);
+}
+
+vec3 ImportanceSampleGGX2( vec2 E, float roughness )
+{
+    float m = roughness * roughness;
+    float m2 = m * m;
+    
+    float Phi = 2.0 * PI * E.x;
+    float CosTheta = sqrt( (1.0 - E.y) / ( 1.0 + (m2 - 1.0) * E.y ) );
+    float SinTheta = sqrt( 1.0 - CosTheta * CosTheta );
+    
+    vec3 H;
+    H.x = SinTheta * cos( Phi );
+    H.y = SinTheta * sin( Phi );
+    H.z = CosTheta;
+    
+    return vec3( H );
+}
+
+vec2 IntegrateBRDF( float Roughness, float NoV )
+{
+    vec3 V;
+    V.x = sqrt(1.0f - NoV * NoV); // sin
+    V.y = 0.0;
+    V.z = NoV; // cos
+    
+    float A = 0.0;
+    float B = 0.0;
+    const uint NumSamples = 512;
+    
+    for (uint i = 0; i < NumSamples; i++)
+    {
+        vec2 Xi = Hammersley(i, NumSamples);
+        
+        vec3 H = ImportanceSampleGGX2(Xi, Roughness).xyz;
+        vec3 L = 2.0 * dot(V, H) * H - V;
+        float NoL = clamp(L.z, 0.0f, 1.0f);
+        float NoH = clamp(H.z, 0.0f, 1.0f);
+        float VoH = clamp(dot(V, H), 0.0f, 1.0f);
+        if (NoL > 0.0)
+        {
+            float G = G_Smith( Roughness, NoV, NoL );
+            float G_Vis = G * VoH / (NoH * NoV);
+            float Fc = pow(1.0 - VoH, 5.0);
+            A += (1.0 - Fc) * G_Vis;
+            B += Fc * G_Vis;
+            
+        }
+    }
+    return vec2(A, B) / NumSamples;
+}
+
+
+void main()
+{
+    color = vec4(IntegrateBRDF(UV.x, UV.y), 0.0, 1.0);
+}
+#endif
+

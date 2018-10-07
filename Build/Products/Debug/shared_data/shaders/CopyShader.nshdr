@@ -1,0 +1,129 @@
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL composite shader.
+//
+
+#ifdef USE_PRECISION
+precision PRECISION_TYPE float;
+#endif
+
+uniform vec4 _Corner2; 
+
+#ifdef _VERTEX_
+
+layout( location = 0 ) in vec3 model_vertexpos;
+//layout( location = 1 ) in vec2 model_uvs;
+
+noperspective out vec2 UV;
+out vec2 vs_ray;
+
+void main()
+{
+    //UV = model_uvs;
+    UV = (model_vertexpos.xy + vec2( 1.0, 1.0 )) / 2.0;
+    gl_Position =  vec4( model_vertexpos, 1.0 );
+    
+    vs_ray = (2.0 * UV.xy - 1.0) * _Corner2.xy + _Corner2.zw;
+}
+
+#endif
+
+#ifdef _FRAGMENT_
+
+
+//! UV coords.
+noperspective in vec2 UV;
+in vec2 vs_ray;
+
+uniform sampler2D depthTexture;
+uniform sampler2D velocityTex;
+uniform mat4 _InvVP, _PrevVP2;
+
+//! Render target texture out.
+layout( location = 0 ) out vec4 color;
+
+
+#define ZNEAR 0.1
+#define ZFAR 3000.0
+
+// x = 1-far/near
+// y = far/near
+// z = x/far
+// w = y/far
+const float zx = 1.0f - ZFAR / ZNEAR;
+const float zy = ZFAR / ZNEAR;
+const vec4 zbuffer = vec4( zx, zy, zx / ZFAR, zy / ZFAR );
+// Z buffer to linear depth
+float LinearEyeDepth( float z )
+{
+    /*return (2.0 * ZNEAR) / (ZFAR + ZNEAR - z * (ZFAR - ZNEAR));;*/return 1.0 / (zbuffer.z * z + zbuffer.w);
+}
+
+/**
+ *  Linearize depth.
+ */
+float ld(in float depth) {
+    return (2.0 * ZNEAR) / (ZFAR + ZNEAR - depth * (ZFAR - ZNEAR));
+}
+
+void main()
+{
+//    // Deferred rendering!
+//    float depthScreen = ld( textureLod( depthTexture, UV, 0 ).x );
+//    
+//    // Scene depth.
+//    vec3 vs_pos = vec3( vs_ray, 1.0 ) * depthScreen ;
+//    vec4 ws_pos = _InvVP * vec4(vs_pos, 1.0);
+//    //    ws_pos.xyz /= ws_pos.w;
+//    // get previous screen space position:
+//    vec4 previous = _PrevVP2 * ws_pos;
+//    previous.xyz /= previous.w;
+//    previous.xy = previous.xy * 0.5 + 0.5;
+//    
+//    vec2 ss_prepass_vel = (UV.xy - previous.xy) ;
+
+    
+//    float depthScreen = clamp(textureLod( depthTexture, UV, 0 ).x, 0.001, 0.999);
+//    
+//    // Scene depth.
+//    float depthNDC = depthScreen * 2.0 - 1.0;
+//    vec4 projectedPos = vec4( UV * 2.0 - 1.0, depthNDC, 1.0);
+//    vec4 sPos = _InvVP * projectedPos; // Needs some optimization.
+//    // Get current world space position:
+//    vec3 current = sPos.xyz / sPos.w;
+
+//    // get previous screen space position:
+//    vec4 previous = _PrevVP2 * vec4(current, 1.0);
+//    previous.xyz /= previous.w;
+//    previous.xy = previous.xy * 0.5 + 0.5;
+//    
+//    vec2 ss_prepass_vel = (UV - previous.xy) * 2.0 ;
+    color = vec4(textureLod(velocityTex, UV, 0).zw , 0.0, 1.0);
+}
+#endif

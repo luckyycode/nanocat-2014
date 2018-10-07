@@ -1,0 +1,76 @@
+
+ui/font
+{
+    dif ui/font
+    
+    tile 0
+    mipmap 0
+}
+
+moon_albedo
+{
+    dif moon_albedo
+    
+    tile 0
+    mipmap 0
+}
+
+panelorange
+{
+    dif panel
+    norm panel_n
+    spec panel_pbr
+
+    tile 0
+    mipmap 1
+}
+
+sandrocks01
+{
+    dif sandrocks01
+    norm sandrocks01_n
+    spec    sandrocks01_pbr
+
+    tile 0
+    mipmap 1
+}
+
+grasssand01
+{
+    dif grasssand01
+    norm grasssand01_n
+    spec    grasssand01_pbr
+
+    tile 0
+    mipmap 1
+}
+
+greyrock01
+{
+    dif greyrock01
+    norm greyrock01_n
+    spec    greyrock01_pbr
+    
+    tile 0
+    mipmap 1
+}
+
+coupe
+{
+    dif coupe
+    norm coupe_n
+    spec    coupe_pbr
+    
+    tile 0
+    mipmap 1
+}
+
+
+tree01_billboard
+{
+    dif tree01_billboard
+    norm tree01_billboard_n
+    
+    tile 0
+    mipmap 0
+}

@@ -1,0 +1,74 @@
+//
+//          **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL font shader.
+//
+//  Available defines: HALF_WIDTH/HALF_HEIGHT
+//
+
+#ifdef _VERTEX_
+precision lowp float;
+
+layout(location = 0) in vec4 vertexPosition_screenspace;
+//layout(location = 1) in vec2 vertexUV;
+
+noperspective out vec2 UV;
+
+//uniform vec2 scale = vec2( 1.0 );
+//uniform vec2 translation = vec2( 0.0 );
+uniform vec4 scale_origin = vec4( 1.0 );
+void main(){
+    //	vec2 vphn = vertexPosition_screenspace - vec2( HALF_WIDTH, HALF_HEIGHT );
+    //    vphn.y = -1.0 * vphn.y;
+    //	vphn /= vec2( HALF_WIDTH - 1.0, HALF_HEIGHT );
+    
+    //	gl_Position = vec4( vphn, 0.0, 1.0 );
+    
+    vec4 vPos;
+    vPos.x = (vertexPosition_screenspace.x * scale_origin.x + scale_origin.z) / HALF_WIDTH - 1.0f;
+    vPos.y = 1.0f - (vertexPosition_screenspace.y * scale_origin.y + scale_origin.w) / HALF_HEIGHT;
+    vPos.z = 0.0f;
+    vPos.w = 1.0f;
+    
+    gl_Position = vPos;
+    
+    UV = vertexPosition_screenspace.zw;
+}
+#endif
+
+
+#ifdef _FRAGMENT_
+precision lowp float;
+
+noperspective in vec2 UV;
+out vec4 color;
+
+uniform sampler2D font_texture;
+uniform vec3 colorModifier;
+
+void main(){
+    float v = texture( font_texture, UV ).r;
+    
+    color.rgb = (1.0 - v) * colorModifier * 0.15 + v * colorModifier;
+    color.a = 0.6 + 0.3 * v;
+}
+
+#endif

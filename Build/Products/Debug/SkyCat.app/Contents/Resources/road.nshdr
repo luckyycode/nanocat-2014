@@ -1,0 +1,62 @@
+#ifdef _VERTEX_
+
+precision mediump float;
+
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec2 UV;
+
+uniform mat4 MVP;
+uniform mat4 ModelMatrix;
+
+smooth out vec2 mUV;
+smooth out vec4 vNormal;
+smooth out vec3 vVertex;
+
+void main()
+{
+	mUV = UV;
+	vec4 oVertex = vec4( inPosition , 1.0 );
+
+    vNormal = ModelMatrix * vec4( inNormal, 0.0 );
+    vVertex = oVertex.xyz;
+    
+	gl_Position = MVP * oVertex;
+}
+
+#endif
+
+#ifdef _FRAGMENT_
+
+precision mediump float;
+
+uniform sampler2D samplerTex;
+uniform sampler2D normalTex;
+uniform sampler2D rgbMap;
+
+smooth in vec2 mUV;
+smooth in vec4 vNormal;
+smooth in vec3 vVertex;
+
+layout(location = 0) out vec4 color;
+layout(location = 1) out vec4 normalColor;
+layout(location = 2) out vec4 outVisual;
+layout(location = 3) out vec4 outPosition;
+
+
+void main()
+{
+    // Diffuse.
+	vec4 decalMap = texture( samplerTex, mUV );
+    // We need normal mapping here to apply visual lighting.
+    vec4 normalMap = normalize((texture( normalTex, mUV ) * 2.0 - 1.0) + vNormal);
+    // PBR map.
+    vec4 rgbMap = texture( rgbMap, mUV );
+    
+    color = decalMap;
+    normalColor = vec4( normalMap.x*0.5+0.5, normalMap.y*0.5+0.5,normalMap.z*0.5+0.5, 1.0 );
+	outVisual = vec4( rgbMap.rgb, 0.0 );
+    outPosition = vec4(0.0);
+}
+
+#endif

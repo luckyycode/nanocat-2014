@@ -1,0 +1,57 @@
+
+uniform vec3 fProperties;
+
+#ifdef _VERTEX_
+
+precision mediump float;
+
+layout(location = 0) in vec3 inPosition;
+//layout(location = 1) in vec2 UV;
+
+uniform mat4 MVP, rotationMatrix;
+
+out vec2 mUV;
+
+void main()
+{
+	mUV = (inPosition.xy + vec2( 1.0, 1.0 )) / 2.0;
+	vec4 oVertex = vec4( inPosition  * fProperties.x, 1.0 );
+
+	gl_Position = MVP * rotationMatrix * oVertex;
+}
+
+#endif
+
+#ifdef _FRAGMENT_
+
+precision mediump float;
+
+uniform sampler2D samplerTex;
+uniform sampler2D normalTex;
+
+in vec2 mUV;
+
+layout(location = 0) out vec4 color;
+layout(location = 1) out vec4 normalColor;
+layout(location = 2) out vec4 outVisual;
+layout(location = 4) out vec4 outPosition;
+
+
+void main() {
+	vec4 decalMap = texture( samplerTex, mUV );
+	if( decalMap.a < 0.425 ) { // The answer.
+   		discard;
+    }
+
+    // We need normal mapping here to apply visual lighting.
+    vec4 normalMap = normalize(texture( normalTex, mUV ) * 2.0 - 1.0);
+
+    color = decalMap;
+    color.a = fProperties.z;
+    
+    normalColor = vec4( normalMap.x*0.5+0.5, normalMap.y*0.5+0.5,normalMap.z*0.5+0.5, 1.0f );
+    outVisual = vec4( 0.0, 0.0, fProperties.y, 0.0 );
+	outPosition = vec4( 0.0 );
+}
+
+#endif

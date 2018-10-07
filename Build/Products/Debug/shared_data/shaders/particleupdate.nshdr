@@ -1,0 +1,174 @@
+
+
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  Particle update shader.
+//
+
+#ifdef USE_PRECISION
+    precision PRECISION_TYPE float;
+#endif
+
+#ifdef _VERTEX_
+
+layout (location = 0) in vec3 vPosition;
+layout (location = 1) in vec3 vVelocity;
+layout (location = 2) in vec3 vColor;
+layout (location = 3) in float fLifeTime;
+layout (location = 4) in float fSize;
+layout (location = 5) in int iType;
+
+out vec3 vPositionPass;
+out vec3 vVelocityPass;
+out vec3 vColorPass;
+out float fLifeTimePass;
+out float fSizePass;
+out int iTypePass;
+
+void main()
+{
+    vPositionPass = vPosition;
+    vVelocityPass = vVelocity;
+    vColorPass = vColor;
+    fLifeTimePass = fLifeTime;
+    fSizePass = fSize;
+    iTypePass = iType;
+}
+
+#endif
+
+
+#ifdef _GEOMETRY_
+
+layout(points) in;
+layout(points) out;
+layout(max_vertices = 40) out;
+
+// All that we get from vertex shader.
+
+in vec3 vPositionPass[];
+in vec3 vVelocityPass[];
+in vec3 vColorPass[];
+in float fLifeTimePass[];
+in float fSizePass[];
+in int iTypePass[];
+
+// All that we send further.
+
+out vec3 vPositionOut;
+out vec3 vVelocityOut;
+out vec3 vColorOut;
+out float fLifeTimeOut;
+out float fSizeOut;
+out int iTypeOut;
+
+uniform vec4 vGenPositionAndTime; // Position where new particles are spawned
+uniform vec3 vGenGravityVector; // Gravity vector for particles - updates velocity of particles
+uniform vec3 vGenVelocityMin;   // Velocity of new particle - from min to (min+range)
+uniform vec3 vGenVelocityRange;
+
+uniform vec3 vGenColor;
+
+uniform vec3 fGenLifeMinRangeAndSize; // Life of new particle - from min to (min+range)
+//uniform float fTimePassed;    // Time passed since last frame
+
+uniform vec3 vRandomSeed;       // Seed number for our random number function
+vec3 vLocalSeed;
+
+uniform int iNumToGenerate;     // How many particles will be generated next time, if greater than zero, particles are generated
+
+/**
+ *  This function returns random number from zero to one.
+ */
+float randZeroOne()
+{
+    uint n = floatBitsToUint(vLocalSeed.y * 214013.0 + vLocalSeed.x * 2531011.0 + vLocalSeed.z * 141251.0);
+    n = n * (n * n * 15731u + 789221u);
+    n = (n >> 9u) | 0x3F800000u;
+    
+    float fRes =  2.0 - uintBitsToFloat(n);
+    vLocalSeed = vec3(vLocalSeed.x + 147158.0 * fRes, vLocalSeed.y*fRes  + 415161.0 * fRes, vLocalSeed.z + 324154.0*fRes);
+    return fRes;
+}
+
+void main()
+{
+    vLocalSeed = vRandomSeed;
+    
+    // gl_Position doesn't matter now, as rendering is discarded, so I don't set it at all
+    
+    vPositionOut = vPositionPass[0];
+    vVelocityOut = vVelocityPass[0];
+    
+    if( iTypePass[0] != 0 )
+    {
+        vPositionOut += vVelocityOut * vGenPositionAndTime.w;
+    }
+    
+    if( iTypePass[0] != 0 )
+    {
+        vVelocityOut += vGenGravityVector * vGenPositionAndTime.w;
+    }
+    
+    vColorOut = vColorPass[0];
+    fLifeTimeOut = fLifeTimePass[0] - vGenPositionAndTime.w;
+    fSizeOut = fSizePass[0];
+    iTypeOut = iTypePass[0];
+    
+    if( iTypeOut == 0 )
+    {
+        EmitVertex();
+        EndPrimitive();
+        
+        for( int i = 0; i < iNumToGenerate; ++i )
+        {
+            vPositionOut = vGenPositionAndTime.xyz;
+
+            vVelocityOut = vGenVelocityMin + vec3(vGenVelocityRange.x * randZeroOne(), vGenVelocityRange.y * randZeroOne(), vGenVelocityRange.z * randZeroOne() );
+            
+            vColorOut = vGenColor;
+            
+            fLifeTimeOut = fGenLifeMinRangeAndSize.x + fGenLifeMinRangeAndSize.y * randZeroOne();
+            
+            fSizeOut = fGenLifeMinRangeAndSize.z;
+            iTypeOut = 1;
+            
+            EmitVertex();
+            EndPrimitive();
+        }
+    }
+    else if(fLifeTimeOut > 0.0)
+    {
+        EmitVertex();
+        EndPrimitive();
+    }
+}
+
+#endif
+

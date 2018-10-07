@@ -1,0 +1,1570 @@
+
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL composite shader uses most of g-buffer.
+//
+
+
+// iOS and another OpenGL ES devices require this.
+#ifdef USE_PRECISION
+precision PRECISION_TYPE float;
+#endif
+
+//! Used for lighting & time.
+uniform vec4 lightDirectionAndTime;
+
+// Vertex shader.
+#ifdef _VERTEX_
+
+layout( location = 0 ) in vec3 model_vertexpos;
+//layout( location = 1 ) in vec2 model_uvs;
+
+noperspective out vec2 UV;
+
+void main()
+{
+    //UV = model_uvs;
+    UV = (model_vertexpos.xy + vec2( 1.0, 1.0 )) / 2.0;
+    gl_Position =  vec4( model_vertexpos, 1.0 );
+}
+
+#endif
+
+// Fragment shader.
+#ifdef _FRAGMENT_
+
+#include "utilities.h"
+
+/**
+ *      Scene shader which produces:
+ *
+ *  1) SSAO ( SSDO if required ).
+ *  2) Physically based image-based lighting.
+ *  3) Percentage-closer soft shadows.
+ *  4) 2D on screen effects ( lens, lens dirt, flare, etc .. )
+ *  5) Height fog.
+ *
+ *  .. etc
+ */
+
+noperspective in vec2 UV;
+
+/*      Samplers.       */
+uniform sampler2D renderedTexture;      //! Scene diffuse (albedo) texture.
+uniform sampler2D depthTexture;         //! Scene depth.
+uniform sampler2D lightTexture;         //! Point light scene (offscreen'd).
+uniform sampler2D normalTexture;        //! Deferred normal scene and light intensity ( .a ).
+uniform sampler2D emissiveSampler;        //! Deferred light source data.
+uniform sampler2D iblSampler;           //! RMA sampler
+//uniform sampler2D positionTexture;      //! World position sampler.
+uniform sampler2D particleSampler;      //! Particle scene (offscreen'd).
+uniform sampler2D noiseTex;             //! Noise sampler used for SSAO/SSDO.
+uniform sampler2DArray  shadowSamplers; //! Shadow samplers.
+uniform samplerCube environmentSampler; //! Dynamic environment mapping.
+uniform sampler2D brdfSampler;          //! BRDF lookup texture ( lut ).
+
+//! Cascaded shadow map splits distances.
+uniform vec4 far_d;
+uniform mat4 g_texMatrix[8];              //! Shadow map matrices. Last four are normal matrices.
+
+uniform mat4 perspectiveInvMatrix;      //! Perspective inverted matrix (do not update per frame!).
+uniform vec3 mSkyColor, mSunColor, mGlobalFogColor;                 //! Fog/light color.
+uniform vec3 cameraPosition;            //! Camera position.
+uniform mat4 invProjView;               //! Inverted projection matrix.
+uniform mat4 projectionMatrix;          //! Current projection matrix.
+
+uniform vec3    vSunPositionWS;
+
+uniform vec2 g_lightRadiusUV;
+uniform float g_lightZNear;
+uniform float g_lightZFar;
+
+// Using similar triangles from the surface point to the area light
+vec2 searchRegionRadiusUV(float zWorld) {
+    return g_lightRadiusUV * (zWorld - g_lightZNear) / zWorld;
+}
+// Using similar triangles between the area light, the blocking plane and the surface point
+vec2 penumbraRadiusUV(float zReceiver, float zBlocker) {
+    return g_lightRadiusUV * (zReceiver - zBlocker) / zBlocker;
+}
+
+const vec2 Poisson25[25] = vec2[](
+                                  vec2(-0.978698, -0.0884121),
+                                  vec2(-0.841121, 0.521165),
+                                  vec2(-0.71746, -0.50322),
+                                  vec2(-0.702933, 0.903134),
+                                  vec2(-0.663198, 0.15482),
+                                  vec2(-0.495102, -0.232887),
+                                  vec2(-0.364238, -0.961791),
+                                  vec2(-0.345866, -0.564379),
+                                  vec2(-0.325663, 0.64037),
+                                  vec2(-0.182714, 0.321329),
+                                  vec2(-0.142613, -0.0227363),
+                                  vec2(-0.0564287, -0.36729),
+                                  vec2(-0.0185858, 0.918882),
+                                  vec2(0.0381787, -0.728996),
+                                  vec2(0.16599, 0.093112),
+                                  vec2(0.253639, 0.719535),
+                                  vec2(0.369549, -0.655019),
+                                  vec2(0.423627, 0.429975),
+                                  vec2(0.530747, -0.364971),
+                                  vec2(0.566027, -0.940489),
+                                  vec2(0.639332, 0.0284127),
+                                  vec2(0.652089, 0.669668),
+                                  vec2(0.773797, 0.345012),
+                                  vec2(0.968871, 0.840449),
+                                  vec2(0.991882, -0.657338)
+                                  );
+
+const vec2 Poisson64[64] = vec2[](
+                                  vec2(-0.934812, 0.366741),
+                                  vec2(-0.918943, -0.0941496),
+                                  vec2(-0.873226, 0.62389),
+                                  vec2(-0.8352, 0.937803),
+                                  vec2(-0.822138, -0.281655),
+                                  vec2(-0.812983, 0.10416),
+                                  vec2(-0.786126, -0.767632),
+                                  vec2(-0.739494, -0.535813),
+                                  vec2(-0.681692, 0.284707),
+                                  vec2(-0.61742, -0.234535),
+                                  vec2(-0.601184, 0.562426),
+                                  vec2(-0.607105, 0.847591),
+                                  vec2(-0.581835, -0.00485244),
+                                  vec2(-0.554247, -0.771111),
+                                  vec2(-0.483383, -0.976928),
+                                  vec2(-0.476669, -0.395672),
+                                  vec2(-0.439802, 0.362407),
+                                  vec2(-0.409772, -0.175695),
+                                  vec2(-0.367534, 0.102451),
+                                  vec2(-0.35313, 0.58153),
+                                  vec2(-0.341594, -0.737541),
+                                  vec2(-0.275979, 0.981567),
+                                  vec2(-0.230811, 0.305094),
+                                  vec2(-0.221656, 0.751152),
+                                  vec2(-0.214393, -0.0592364),
+                                  vec2(-0.204932, -0.483566),
+                                  vec2(-0.183569, -0.266274),
+                                  vec2(-0.123936, -0.754448),
+                                  vec2(-0.0859096, 0.118625),
+                                  vec2(-0.0610675, 0.460555),
+                                  vec2(-0.0234687, -0.962523),
+                                  vec2(-0.00485244, -0.373394),
+                                  vec2(0.0213324, 0.760247),
+                                  vec2(0.0359813, -0.0834071),
+                                  vec2(0.0877407, -0.730766),
+                                  vec2(0.14597, 0.281045),
+                                  vec2(0.18186, -0.529649),
+                                  vec2(0.188208, -0.289529),
+                                  vec2(0.212928, 0.063509),
+                                  vec2(0.23661, 0.566027),
+                                  vec2(0.266579, 0.867061),
+                                  vec2(0.320597, -0.883358),
+                                  vec2(0.353557, 0.322733),
+                                  vec2(0.404157, -0.651479),
+                                  vec2(0.410443, -0.413068),
+                                  vec2(0.413556, 0.123325),
+                                  vec2(0.46556, -0.176183),
+                                  vec2(0.49266, 0.55388),
+                                  vec2(0.506333, 0.876888),
+                                  vec2(0.535875, -0.885556),
+                                  vec2(0.615894, 0.0703452),
+                                  vec2(0.637135, -0.637623),
+                                  vec2(0.677236, -0.174291),
+                                  vec2(0.67626, 0.7116),
+                                  vec2(0.686331, -0.389935),
+                                  vec2(0.691031, 0.330729),
+                                  vec2(0.715629, 0.999939),
+                                  vec2(0.8493, -0.0485549),
+                                  vec2(0.863582, -0.85229),
+                                  vec2(0.890622, 0.850581),
+                                  vec2(0.898068, 0.633778),
+                                  vec2(0.92053, -0.355693),
+                                  vec2(0.933348, -0.62981),
+                                  vec2(0.95294, 0.156896)
+                                  );
+
+// Returns average blocker depth in the search region, as well as the number of found blockers.
+// Blockers are defined as shadow-map samples between the surface point and the light.
+void findBlocker(
+                 out float accumBlockerDepth,
+                 out float numBlockers,
+                 out float maxBlockers,
+                 vec3 uv,
+                 float z0,
+                 vec2 dz_duv,
+                 vec2 searchRegionRadiusUV)
+{
+    accumBlockerDepth = 0.0;
+    numBlockers = 0.0;
+    maxBlockers = 64.0;
+    
+    for (int i = 0; i < 64; ++i) {
+        vec2 offset = Poisson64[i] * searchRegionRadiusUV;
+        
+        float shadowMapDepth = borderDepthTexture( shadowSamplers, uv + vec3(offset, 0.0) );
+        float z = biasedZ( z0, dz_duv, offset );
+        
+        if( shadowMapDepth < z ) {
+            accumBlockerDepth += shadowMapDepth;
+            numBlockers++;
+        }
+    }
+    
+}
+
+/**
+ *  Shadow occlusion.
+ */
+float getOccCoef( const in vec4 shadow_coords )
+{
+    //    if((shadow_coords.x <= 1.0) && (shadow_coords.y <= 1.0) &&
+    //       (shadow_coords.x >= 0.0) && (shadow_coords.y >= 0.0)) {
+    //        return 1.0f;
+    //    }
+    // get the stored depth
+    float shadow_d = texture(shadowSamplers, shadow_coords.xyz).x;
+    // get the difference of the stored depth and the distance of this fragment to the light
+    float diff = shadow_d - shadow_coords.w;
+    // smoothen the result a bit, so that we don't get hard shadows
+    return clamp( diff * 250.0 + 1.0, 0.0, 1.0);
+}
+
+float zClipToEye(float z) {
+    return g_lightZFar * g_lightZNear / (g_lightZFar - z * (g_lightZFar - g_lightZNear));
+}
+
+// Project UV size to the near plane of the light
+vec2 projectToLightUV(vec2 sizeUV, float zWorld) {
+    return sizeUV * g_lightZNear / zWorld;
+}
+
+// Performs PCF filtering on the shadow map using multiple taps in the filter region.
+float pcfFilter(vec3 uv, float z0, vec2 dz_duv, vec2 filterRadiusUV)
+{
+    float sum = 0.0;
+    
+    for( int i = 0; i < 64; ++i ) {
+        vec2 offset = Poisson64[i] * filterRadiusUV;
+        float z = biasedZ(z0, dz_duv, offset);
+        sum += getOccCoef( vec4( uv + vec3(offset, 0.0), z0 ) );
+    }
+    
+    return sum / 64.0;
+}
+
+/**
+ *  Scene shadowing.
+ *
+ *  @param worldPos World position.
+ *  @param depthZ   Linear depth.
+ *  @param normal   Scene normal ( required for no-leaky shadows ).
+ */
+float cuteshadows( const in vec3 worldPos, const in float depthZ, const in vec3 normal, out vec4 cols )
+{
+    int index = 3;
+    mat4 mat = g_texMatrix[3];
+    
+    // find the appropriate depth map to look up in based on the depth of this fragment
+    if( depthZ < far_d.x ) {
+        index = 0;
+        cols = vec4(1.0, 0.0, 0.0, 1.0 );
+    }
+    else if( depthZ < far_d.y ) {
+        index = 1;
+        cols = vec4(0.0, 1.0, 0.0, 1.0 );
+    }
+    else if( depthZ < far_d.z ) {
+        index = 2;
+        cols = vec4(0.0, 0.0, 1.0, 1.0 );
+    } 
+    
+    // transform this fragment's position from view space to scaled light clip space
+    // such that the xy coordinates are in [0;1]
+    vec4 shadow_coord = g_texMatrix[index] * vec4(worldPos, 1.0);
+    
+    vec2 uv = shadow_coord.xy;// / shadow_coord.w;
+    float z = shadow_coord.z;// / shadow_coord.w;
+    
+    // Compute gradient using ddx/ddy before any branching
+    vec2 dz_duv = depthGradient(uv, z);
+    // Eye-space z from the light's point of view
+    float zEye = -(g_texMatrix[index + 4] * vec4(worldPos, 1.0)).z;
+    
+    // ------------------------
+    // STEP 1: blocker search
+    // ------------------------
+    float accumBlockerDepth, numBlockers, maxBlockers;
+    vec2 searchRegionRadiusUV = searchRegionRadiusUV(zEye);
+    
+    findBlocker(accumBlockerDepth, numBlockers, maxBlockers, vec3(uv, float(index)), z, dz_duv, searchRegionRadiusUV);
+    // Early out if not in the penumbra (saves filtering)
+    if (numBlockers == 0.0) {
+        return 1.0;
+    }
+    
+    // ------------------------
+    // STEP 2: penumbra size
+    // ------------------------
+    float avgBlockerDepth = accumBlockerDepth / numBlockers;
+    float avgBlockerDepthWorld = zClipToEye(avgBlockerDepth);
+    vec2 penumbraRadius = penumbraRadiusUV(zEye, avgBlockerDepthWorld);
+    vec2 filterRadius = projectToLightUV(penumbraRadius, zEye);
+    
+    // ------------------------
+    // STEP 3: filtering
+    // ------------------------
+    return pcfFilter(vec3(uv, float(index)), z, dz_duv, penumbraRadius);
+}
+
+
+uniform float fogBotHeight, fogTopHeight, fogBotInten, fogMaxDist, fogSlope;         //! Fog parameters.
+
+//! Render target texture out.
+layout( location = 0 ) out vec4 color;
+layout( location = 1 ) out vec4 emissiveOut;
+
+//uniform sampler2D glareSampler;
+
+//!  Unprojected sun position.
+uniform vec2 lightPositionOnScreen;// = vec2( 0.5, 0.8 );
+
+//!  Global shadow opacity.
+uniform float shadow_ambient = 0.835;
+
+//!  Sun rays.
+#ifdef USE_SUNRAYS
+
+const float exposure = 0.435;
+const float decay = 1.0;
+const float density = 0.9;
+
+const int NUM_SAMPLES = 65;
+
+#endif
+
+// Sun luminance.
+uniform float fSunLuminanceInLux;
+
+float radicalInverse_VdC(uint bits)
+{
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    
+    return float(bits) * 2.3283064365386963e-10; // / 0x100000000
+}
+
+vec2 Hammersley(uint i, uint n) {
+    return vec2(i/n, radicalInverse_VdC(i));
+}
+
+float sqr(float x) {
+    return x*x;
+}
+
+void importanceSampleCosDir( in vec2 u, in vec3 N, out vec3 L, out float NdotL, out float pdf )
+{
+    // Local referencial
+    vec3 upVector = abs(N.z) < 0.999 ? vec3( 0.0, 0.0, 1.0 ) : vec3( 1.0, 0.0, 0.0 );
+    vec3 tangentX = normalize( cross( upVector, N ) );
+    vec3 tangentY = cross( N, tangentX );
+    
+    float u1 = u.x;
+    float u2 = u.y;
+    
+    float r = sqrt( u1 );
+    float phi = u2 * PI * 2.0;
+    
+    L = vec3( r * cos(phi), r * sin(phi), sqrt(max(0.0f, 1.0f - u1) ) );
+    L = normalize( tangentX * L.y + tangentY * L.x + N * L.z );
+    
+    NdotL = dot( L, N );
+    pdf = NdotL * -PI;
+}
+// Brian Karis, Epic Games "Real Shading in Unreal Engine 4"
+// Used for getting a normal to sample a cube map given a sine and cosine, roughness, and base world space normal
+vec3 ImportanceSampleGGX( vec2 Xi, float Roughness, vec3 N )
+{
+    float a = Roughness * Roughness;
+    
+    float Phi = 2.0 * PI * Xi.x;
+    float CosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a * a - 1.0) * Xi.y));
+    float SinTheta = sqrt(1.0 - CosTheta * CosTheta);
+    
+    vec3 H;
+    H.x = SinTheta * cos(Phi);
+    H.y = SinTheta * sin(Phi);
+    H.z = CosTheta;
+    
+    vec3 UpVector = abs(N.z) < 0.999f ? vec3(0.0, 0.0, 1.0) : vec3 (1.0, 0.0, 0.0);
+    vec3 TangentX = normalize(cross(UpVector, N));
+    vec3 TangentY = cross(N, TangentX);
+    
+    return TangentX * H.x + TangentY * H.y + N * H.z;
+}
+
+vec3 envMapCube(vec3 wcNormal, float flipEnvMap) {
+    return vec3(flipEnvMap * wcNormal.x, wcNormal.y, wcNormal.z);
+}
+
+vec3 envMapCube(vec3 wcNormal) {
+    //-1.0 for left handed coorinate system oriented texture (usual case)
+    return envMapCube(wcNormal, -1.0);
+}
+
+float RoughnessToMipLevel(float Roughness, float MipCount) {
+    // Level starting from 1x1 mip
+    return MipCount - 6.0 - 1.15 * log2(Roughness);
+    //solve for x z = y - 4 - 1.15 * log2(x)
+    //log2(roughness) = (mipcount - 4 - mip)
+}
+
+float MipLevelToRoughness(int MipLevel, float MipCount) {
+    return pow(2.0f, (MipCount - 6.0f - MipLevel) / 1.15f);
+}
+
+vec3 F_Schlick(in vec3 f0, in float f90, in float u) {
+    return f0 + (f90 - f0) * pow(1.f - u, 5.f);
+}
+
+float V_SmithGGXCorrelated(float NdotL, float NdotV, float alphaG) {
+    // Original formulation of G_SmithGGX Correlated
+    // lambda_v = (-1 + sqrt(alphaG2 * (1 - NdotL2) / NdotL2 + 1)) * 0.5f;
+    // lambda_l = (-1 + sqrt(alphaG2 * (1 - NdotV2) / NdotV2 + 1)) * 0.5f;
+    // G_SmithGGXCorrelated = 1 / (1 + lambda_v + lambda_l);
+    // V_SmithGGXCorrelated = G_SmithGGXCorrelated / (4.0f * NdotL * NdotV);
+    
+    // This is the optimize version
+    float alphaG2 = alphaG * alphaG;
+    // Caution: the "NdotL *" and "NdotV *" are explicitely inversed, this is not a mistake.
+    float Lambda_GGXV = NdotL * sqrt((-NdotV * alphaG2 + NdotV) * NdotV + alphaG2);
+    float Lambda_GGXL = NdotV * sqrt((-NdotL * alphaG2 + NdotL) * NdotL + alphaG2);
+    
+    return 0.5f / (Lambda_GGXV + Lambda_GGXL);
+}
+
+float Fr_DisneyDiffuse(float NdotV, float NdotL, float LdotH, float linearRoughness)
+{
+    float energyBias = mix(0.0, 0.5, linearRoughness);
+    float energyFactor = mix(1.0, 1.0 / 1.51, linearRoughness);
+    
+    float fd90 = energyBias + 2.0 * LdotH*LdotH * linearRoughness;
+    vec3 f0 = vec3(1.0f, 1.0f, 1.0f);
+    
+    float lightScatter = F_Schlick(f0, fd90, NdotL).r;
+    float viewScatter = F_Schlick(f0, fd90, NdotV).r;
+    
+    return lightScatter * viewScatter * energyFactor;
+}
+
+// Brent, Burley, "Physically-Based Shading at Disney", 2012
+float Burley( float NdotL, float NdotV, float VdotH, float Roughness )
+{
+    float F_D90 = 0.5 + 2.0 * VdotH * VdotH * Roughness;
+    return ( 1.0 + ( F_D90 - 1.0) * pow(( 1.0 - NdotL ),5.0) ) * ( 1.0 + ( F_D90 - 1.0) * pow(( 1.0 - NdotV ),5.0) );
+}
+
+/**
+ *  Oren Nayar diffuse model.
+ */
+float Diffuse_OrenNayar(float r2, vec3 N, vec3 L, vec3 V, float NoL, float NoV)
+{
+    float A = 1.0 - 0.5 * (r2 / (r2 + 0.57));
+    float B = 0.45 * (r2 / (r2 + 0.09));
+    
+    float angleNoL = acos(NoL);
+    float angleNoV = acos(NoV);
+    
+    
+    float alpha = max(angleNoL, angleNoV);
+    float beta = min(angleNoL, angleNoV);
+    float gamma = dot(V - N * dot(V, N), L - N * dot(L, N));
+    
+    return (A + B * max(0.0, gamma) * sin(alpha) * tan(beta)) * clamp(NoL, 0.0, 1.0);
+}
+
+// David Neubelt and Matt Pettineo, Ready at Dawn Studios, "Crafting a Next-Gen Material Pipeline for The Order: 1886", 2013
+float D_GGX(float NdotH, float m)
+{
+    // Divide by PI is apply later
+    float m2 = m * m;
+    float f = (NdotH * m2 - NdotH) * NdotH + 1.0;
+    
+    return m2 / (f * f);
+}
+
+//F0 is specular color at normal incidence
+vec3 F_Schlick1(vec3 f0, float VoH) {
+    return f0 + (1.0 - f0) * exp2((-5.55473 * VoH) - (6.98316 * VoH));
+    
+    //float Fc = pow(1 - VoH, 5);
+    //return saturate(50.0 * f0) * Fc + (1 - Fc) * f0;
+}
+
+// S√©bastien Lagarde and Charles de Rousiers "Moving Frostbite to Physically Based Rendering"
+float specularOcclusionRoughness( float NdotV , float Occlusion , float Roughness ) {
+    return clamp (pow( NdotV + Occlusion , Roughness ) - 1.0 + Occlusion, 0.0, 1.0);
+}
+
+float occlusionHorizon( const in vec3 R, const in vec3 normal)
+{
+    // http://marmosetco.tumblr.com/post/81245981087
+    // TODO we set a min value (10%) to avoid pure blackness (in case of pure metal)
+    float factor = clamp( 1.0 + 1.3 * dot(R, normal), 0.1, 1.0 );
+    return factor * factor;
+}
+
+// --  Functions for computing the dominant direction of the diffuse retro-reflection Disney lobe with lightprobe.
+
+// We have a better approximation of the off specular peak
+// but due to the other approximations we found this one performs better.
+// N is the normal direction
+// R is the mirror vector
+// This approximation works fine for G smith correlated and uncorrelated
+vec3 getSpecularDominantDir(vec3 N, vec3 R, float roughness)
+{
+    float smoothness = clamp(1.0 - roughness, 0.0, 1.0);
+    float lerpFactor = smoothness * (sqrt(smoothness) + roughness);
+    // The result is not normalized as we fetch in a cubemap
+    return mix(N, R, lerpFactor);
+}
+
+// N is the normal direction
+// V is the view vector
+// NdotV is the cosine angle between the view vector and the normal
+vec3 getDiffuseDominantDir(vec3 N, vec3 V, float NdotV, float roughness)
+{
+    float a = 1.02341f * roughness - 1.51174f;
+    float b = -0.511705f * roughness + 0.755868f;
+    float lerpFactor = clamp((NdotV * a + b) * roughness, 0.0, 1.0);
+    // The result is not normalized as we fetch in a cubemap
+    return mix(N, V, lerpFactor);
+}
+
+/* *** Energy Conversion for lights *** */
+#define M_PI PI
+#define M_PI2 9.86960440108935861
+#define M_1_PI 0.31830988618379069
+#define M_1_PI2 0.10132118364233777
+
+/* from Sebastien Lagarde
+ * course_notes_moving_frostbite_to_pbr.pdf */
+
+float sphere_energy(float radius)
+{
+    radius = max(radius, 1e-8);
+    
+    return 0.25 * M_1_PI2 / (radius*radius) /* 1/(4*r¬≤*Pi¬≤) */
+    * M_PI2 * 10.0;  /* XXX : Empirical, Fit cycles power */
+}
+
+float disk_energy(float radius)
+{
+    radius = max(radius, 1e-8);
+    return M_1_PI2 / (radius*radius); /* 1/(r¬≤*Pi¬≤) */
+}
+
+float tube_energy(float radius, float width)
+{
+    radius = max(radius, 1e-8);
+    return 0.5 * M_1_PI2 / (radius * (width + 2 * radius)); /* 1/(4*r¬≤*Pi¬≤) + 1/(2*r*w*Pi¬≤) */
+}
+
+float rectangle_energy(float width, float height)
+{
+    return M_1_PI / (width*height) /* 1/(w*h*Pi) */
+    * 80.0;  /* XXX : Empirical, Fit cycles power */
+}
+
+void bsdf_diffuse_sun_light(vec3 N, vec3 L, vec3 V, float light_distance, float light_radius, float roughness, out float bsdf)
+{
+    light_radius = max(light_radius, 0.0001);
+    float sqrDist =  light_distance * light_distance;
+    float cosTheta = clamp(dot(N, L), -0.999, 0.999);
+    float sqrLightRadius = light_radius * light_radius;
+    float h = min(light_radius / light_distance , 0.9999);
+    float h2 = h*h;
+    
+    bsdf = 0.0 ;
+    if ( cosTheta * cosTheta > h2 /* sinSigmaSqr */ )
+    {
+        bsdf = M_PI * h2 * clamp(cosTheta, 0.0, 1.0);
+    }
+    else
+    {
+        float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+        float x = sqrt(1.0 / h2 - 1.0);
+        float y = -x * ( cosTheta / sinTheta );
+        float sinThetaSqrtY = sinTheta * sqrt(1.0 - y * y);
+        bsdf = (cosTheta * acos(y) - x * sinThetaSqrtY ) * h2 + atan(sinThetaSqrtY / x);
+    }
+    
+    /* Energy conservation + cycle matching */
+    bsdf = max(bsdf, 0.0);
+    bsdf *= disk_energy(light_radius);
+}
+
+vec3 PrefilterEnvMap( float Roughness, vec3 R, float MipLevels )
+{
+    vec3 N = R;
+    vec3 V = R;
+    vec3 PrefilteredColor = vec3(0.0);
+    const uint NumSamples = 4;
+    
+    float TotalWeight = 0.0f;
+    
+    for( uint i = 0; i < NumSamples; ++i )  {
+        vec2 Xi = Hammersley( i, NumSamples );
+        vec3 H = ImportanceSampleGGX( Xi, Roughness, N );
+        vec3 L = 2.0 * dot( V, H ) * H - V;
+        
+        float NoL = clamp( dot( N, L ), 0.0, 1.0 );
+        
+        // Horizon fading trick from http://marmosetco.tumblr.com/post/81245981087
+        const float horizonFade = 1.3;
+        float horiz = clamp( 1.0 + horizonFade * NoL, 0.0, 1.0 );
+        horiz *= horiz;
+        
+        if( NoL > 0.0 )
+        {
+            PrefilteredColor += toGamma(texture( environmentSampler, envMapCube(L),  int(MipLevels - RoughnessToMipLevel(Roughness, MipLevels)) ).rgb) * horiz;
+            TotalWeight += NoL;
+        }
+    }
+    
+    return PrefilteredColor / TotalWeight;
+}
+
+/**
+ *  Diffuse cube importance.
+ */
+vec3 IntegrateDiffuseCube( vec3 N )
+{
+    const uint NumSamples = 4;
+    vec3 accBrdf = vec3(0.0);
+    
+    for( uint i = 0; i < NumSamples; ++i ) {
+        vec2 eta = Hammersley( i, NumSamples );
+        vec3 L;
+        float NdotL;
+        float pdf;
+        
+        // Retrieve info.
+        importanceSampleCosDir( eta, N, L, NdotL, pdf );
+        
+        if( NdotL > 0.0 ) {
+            // Gamma corrected.
+            accBrdf += toGamma(abs(texture(environmentSampler, L).rgb));
+        }
+    }
+    
+    return accBrdf * (1.0f / float(NumSamples));
+}
+
+vec3 IntegrateSpecularIBL( in vec3 SpecularColor , in float Roughness, in vec3 N, in vec3 V, in float MipLevel )
+{
+    float NdotV = abs( dot( N, V ) ) + EPSILON;
+    vec3 R = 2.0 * NdotV * N - V;
+    
+    vec3 dominantR = getSpecularDominantDir(N, R, Roughness);
+    
+    vec3 PrefilteredColor = PrefilterEnvMap( Roughness, dominantR, MipLevel );
+    vec2 envBRDF = texture(brdfSampler, clamp(vec2( Roughness - 0.002, NdotV - 0.002 ), 0.0, 1.0)).xy;
+    
+    return PrefilteredColor * ( SpecularColor * envBRDF.x + envBRDF.y );
+}
+
+float adjustRoughness( const in float roughness, const in vec3 normal ) {
+    // Based on The Order : 1886 SIGGRAPH course notes implementation (page 21 notes)
+    float normalLen = length(normal*2.0-1.0);
+    if ( normalLen < 1.0) {
+        float normalLen2 = normalLen * normalLen;
+        float kappa = ( 3.0 * normalLen -  normalLen2 * normalLen )/( 1.0 - normalLen2 );
+        // http://www.frostbite.com/2014/11/moving-frostbite-to-pbr/
+        // page 91 : they use 0.5/kappa instead
+        return min(1.0, sqrt( roughness * roughness + 1.0/kappa ));
+    }
+    return roughness;
+}
+
+uniform float fOcclusionAmount = 1.0f;
+uniform float fMatShininess = 1.0025;
+
+// Lighting Functions
+//-------------------------------------------------------------------------------------------
+float smoothDistanceAtt(float squaredDistance, float invSqrAttRadius)
+{
+    float factor = squaredDistance * invSqrAttRadius;
+    float smoothFactor = clamp(1.0 - factor * factor, 0.0, 1.0);
+    
+    return smoothFactor;
+}
+
+float getDistanceAtt(float sqrDist, float invSqrAttRadius)
+{
+    float attenuation = 1.0 / (max(sqrDist, 0.01 * 0.01));
+    attenuation *= smoothDistanceAtt(sqrDist, invSqrAttRadius);
+    
+    return attenuation;
+}
+
+float getAngleAtt(vec3 normalizedLightVector, vec3 lightDirection, float lightAngleScale, float lightAngleOffset)
+{
+    float cd = dot(lightDirection, normalizedLightVector);
+    float attenuation = clamp(cd * lightAngleScale + lightAngleOffset, 0.0, 1.0);
+    attenuation *= attenuation;
+    
+    return attenuation;
+}
+
+
+#define CUBEMAP_LOD
+#define INV_PI 1.0/PI
+#define INV_LOG2 1.4426950408889634073599246810019
+uniform mat4 environmentTransform;
+uniform vec2 uEnvironmentLodRange, uEnvironmentSize;
+#define NB_SAMPLES 8
+vec3 textureCubemapLod(const in samplerCube textures, const in vec3 dir, const in float lod )
+{
+    vec4 rgba = textureLod( textures, dir, lod );
+    return rgba.rgb;
+}
+
+vec3 getReferenceTexelEnvironmentLod( const in vec3 dirLocal, const in float pdf ) {
+    
+    vec3 direction = mat3(environmentTransform) * dirLocal;
+    
+#ifdef CUBEMAP_LOD
+    
+    // from sebastien lagarde - frosbite paper
+    // and https://placeholderart.wordpress.com/2015/07/28/implementation-notes-runtime-environment-map-filtering-for-image-based-lighting/
+    float maxLod = float(uEnvironmentLodRange.y);
+    float textureSizes = float(uEnvironmentSize.x);
+    float ds = 1.0/ ( float(NB_SAMPLES) * pdf );
+    float dp = 4.0 * PI / ( 6.0 * textureSizes * textureSizes );
+    
+    // Original paper suggest biasing the mip to improve the results
+    const float mipmapBias = 1.0;
+    float lod = max( 0.5 * log2(ds/dp) + mipmapBias, 0.0 );
+    
+    //return textureCubeLodEXTFixed(uEnvironmentCube, direction, lod );
+    return textureCubemapLod( environmentSampler, direction, lod ).rgb;
+#else
+    return vec3(1.0,0.0,1.0);
+#endif
+    
+}
+
+
+//-------------------------------------------------------------------------------------------
+// Exposure
+//-------------------------------------------------------------------------------------------
+
+// These can be used with an ISO 100 and a shutter speed of 1/125s.
+
+//f/22
+//Snow and sand
+//Dark with sharp edges
+
+//f/16
+//Sunny
+//Distinct
+
+//f/11
+//Slightly overcast
+//Soft around edges
+
+//f/8
+//Overcast
+//Barely visible
+
+//f/5.6
+//Heavily overcast
+//No shadows
+
+//f/4
+//Open shade or sunset
+//No shadows
+
+// Move to CPU
+
+const float Aperture = 16.0;			// N in f-stops.
+const float ShutterTime = 1.0 / 125.0;	// How long aperture is open.
+const float ISO = 100.0; 				// S in ISO
+
+float computeEV100(float aperture, float shutterTime, float ISO) {
+    return log2(aperture * aperture / shutterTime * 100 / ISO);
+}
+
+float computeEV100FromAvgLuminance(float avgLuminance) {
+    return log2(avgLuminance * 100.0 / 12.5);
+}
+
+float convertEV100ToExposer(float EV100)
+{
+    float maxLuminance = 1.2 * pow(2.0, EV100);
+    return 1.0 / maxLuminance;
+}
+
+vec3 computeBloomLuminance( in vec3 bloomColor, in float bloomEC, in float currentEV )
+{
+    // Previous frame currentEV.
+    float bloomEV = currentEV + bloomEC;
+    // Convert to luminance.
+    return bloomColor * pow( 2.0, bloomEV - 3.0 );
+}
+
+vec3 evaluateDiffuseIBL( const in vec3 N,
+                        const in vec3 V)
+{
+    const uint NumSamples = 8;
+    
+    mat3 tangentToWorld = computeTangentFrame(vec4(1.0), N );
+    vec3 contrib = vec3(0.0);
+    vec2 u;
+    for ( uint i = 0; i < NumSamples; i++ ) {
+        
+        // get sample
+        vec2 u = Hammersley( i, NumSamples );
+        //vec2 u = hammersley[i];
+        
+        // compute L vector from importance sampling with cos
+        float phi = M_PI2*u.x;
+        float cosT = sqrt( 1.0 - u.y );
+        float sinT = sqrt( 1.0 - cosT * cosT );
+        vec3 L = tangentToWorld * vec3( sinT* cos(phi), sinT* sin(phi), cosT );
+        // vec3 L = sinT* cos(phi ) * tangentX + ( sinT* sin(phi) ) * tangentY + cosT * N;
+        
+        float NdotL = dot( L, N );
+        
+        if ( NdotL > 0.0 ) {
+            
+            // compute pdf
+            float pdf = NdotL * INV_PI;
+            
+            // vec3 dir = uEnvironmentTransform * L;
+            // vec3 color = textureCubeLodEXT(uEnvironment, dir, 0.0 ).rgb;
+            vec3 color = 1.0 * getReferenceTexelEnvironmentLod( L, pdf ).rgb;
+            
+            // could simplified to texel * INV_PI
+            contrib += color * NdotL / pdf;
+        }
+    }
+    
+    contrib *= INV_PI * 1.0 / float(NumSamples);
+    return contrib;
+}
+
+vec3 SpecularIBL( vec3 SpecularColor, float Roughness, vec3 N, vec3 V )
+{
+    vec3 accLight = vec3(0.0);
+    vec3 weight = vec3(0.0);
+    vec3 contrib = vec3(0.0);
+    
+    float NdotV = abs( dot( N, V ) ) + 1.0e-5;
+    const uint NumSamples = 8;
+    
+    float alpha = Roughness*Roughness;
+    float alphaMinus1 = alpha - 1.0;
+    mat3 tangentToWorld = computeTangentFrame(vec4(1.0), N );
+    float k = alpha * 0.5;
+    float alpha2 = alpha*alpha;
+    float alpha2Minus1 = alpha2 - 1.0;
+    vec3 H, L;
+    for( uint i = 0; i < NumSamples; i++ )
+    {
+        vec2 u = Hammersley( i, NumSamples );
+        
+        // Importance sampling GGX NDF sampling
+        float cosThetaH = sqrt( (1.0-u.y) / (1.0 + alpha2Minus1 * u.y) ); // ue4
+        float sinThetaH = sqrt(1.0 - min(cosThetaH*cosThetaH,1.0) );
+        float phiH = u.x * M_PI2;
+        
+        // Convert sample from half angle to incident angle
+        H = normalize( vec3( sinThetaH*cos(phiH), sinThetaH*sin(phiH), cosThetaH ) );
+        H = tangentToWorld * H;
+        
+        L = normalize(2.0 * dot(V, H) * H - V);
+        
+        float NdotL = clamp( dot(L, N) , 0.0, 1.0 );
+        float NdotH = clamp( dot(H, N) , 0.0, 1.0 );
+        float LdotH = clamp( dot(H, L) , 0.0, 1.0 );
+        
+        // UE4
+        float tmp = alpha / (NdotH*NdotH*( alpha2Minus1 ) + 1.0);
+        float D = tmp * tmp * (1.0 / M_PI);
+        
+        // Frostbite
+        // float tmp = (NdotH * alpha - NdotH ) * NdotH + 1.0;
+        // float D = (alpha * INV_PI) / ( tmp * tmp );
+        
+        
+        float pdfH      = D * NdotH;
+        float pdf       = pdfH / (4.0 * LdotH);
+        //        // Implicit weight (N.L canceled out)
+        //        vec3 F = F_Schlick1(SpecularColor,  LdotH);
+        //        float G = V_SmithGGXCorrelated(NdotL, NdotV, Roughness);
+        //        weight = F * G * D / (4.0 * NdotV);
+        
+        if( dot( L, N ) > 0.0 && pdf > 0.0 ) {
+            // Gamma corrected.
+            accLight = toGamma(getReferenceTexelEnvironmentLod( L, pdf ).rgb) ;
+        }
+        
+        // marmoset tricks
+        accLight *= occlusionHorizon( L, N );
+        
+        //vec3 F = F_Schlick(f0, LdotH);
+        float Fc = pow( 1.0 - LdotH, 5.0 );
+        vec3 F = vec3(1.0 - Fc) * SpecularColor + vec3(Fc);
+        
+        float G_denomator = 1.0/ ( mix( NdotL, 1.0, k) * mix( NdotV, 1.0, k) );
+        //contrib += color * weightPDF;
+        contrib += ( accLight * F ) * ( G_denomator * NdotL * LdotH / NdotH );
+    }
+    
+    contrib *= 1.0 / float(NumSamples);
+    
+    return contrib;//accLight / float(NumSamples);
+}
+
+#define SUN_ANGULAR_DIAMETER  0.00471238898038468986 // 0.0087266462599717
+#define SUN_ANGULAR_DIAMETER_SIN 0.00471237153937342249
+#define SUN_ANGULAR_DIAMETER_COS 0.9999888967155959894
+
+// Sun Most Representative Point (used for MRP area lighting method)
+// From "Frostbite going PBR" paper
+vec3 EvaluateSunMRP( in vec3 normal, in vec3 eyedir )
+{
+    vec3 D = -normalize(cameraPosition - vSunPositionWS);
+    vec3 R = reflect(normal, eyedir);
+    
+    float d = SUN_ANGULAR_DIAMETER_COS; // cos(angularRadius);
+    float r = SUN_ANGULAR_DIAMETER_SIN; // sin(angularRadius);
+    
+    float DdotR = dot(D, R);
+    
+    vec3 S = R - DdotR * D;
+    vec3 L = (DdotR < d) ? normalize(d * D + normalize(S) * r) : R;
+    
+    return L;
+}
+
+/**
+ *  Apply environmental lighting.
+ */
+vec4 env( in vec3 Normal, in vec4 _diff, in vec4 rgbMap, in vec3 wow, const in float shadowVal )
+{
+    // Calculate vectors.
+    vec3 viewDir = normalize(cameraPosition - wow);
+    vec3 lightDir = normalize( vSunPositionWS );////normalize( vSunPositionWS - wow);
+    vec3 halfVector = normalize(viewDir + lightDir);
+    
+    float NdotL = max(dot(Normal, lightDir), 0.0);
+    // Avoid artifact - Ref: SIGGRAPH14 - Moving Frostbite to PBR
+    float NdotV = abs(dot(Normal, viewDir)) + EPSILON;
+    float NdotH = max(dot(Normal, halfVector), 0.0);
+    float LdotH = max(dot(lightDir, halfVector), 0.0);
+    float VdotH = max(dot(viewDir, halfVector), 0.0);
+    
+    // Sun evaluation light ( Closest point approximation ).
+    vec3 Ls = EvaluateSunMRP( Normal, -viewDir );
+    vec3 Hs = normalize( Ls + viewDir );
+    
+    float NdotLs = max( dot( Normal, Ls ), 0.0 );
+    
+    //    NdotH = max(dot(Normal, Hs), 0.0);
+    VdotH = max(dot(viewDir, Hs), 0.0);
+    LdotH = max(dot(Ls, Hs), 0.0);
+    
+    // Diffuse and specular evaluation
+    float illuminance = fSunLuminanceInLux /* Lux */ * NdotLs;
+    
+    vec3 lightColor = mSunColor ;
+    float lightIntensity = 1.0;
+    
+    //    _sunIlluminanceInLux( 110000.f )
+    //    _skyIlluminanceInLux( 30000.f )
+    
+    /**
+     *      RMA map.
+     * R = Metallic  G = Roughness  B = Occlusion
+     */
+    
+    // ROUGHNESS
+    float roughness = rgbMap.y;
+    roughness *= fMatShininess;
+#   if defined( NEKO_VIEW_DEPENDENT_ROUGHNESS )
+    roughness = mix(0.0, roughness, NdotV) * fViewDpdtRoughness + roughness * (1.0 - fViewDpdtRoughness);
+#   endif
+    
+    // Metallic
+    float metallic = rgbMap.x;
+    metallic = metallic * metallic; // sRGB
+    
+    // Diffuse
+    vec4 diffColor = _diff * (1.0 - metallic); // No metallic diffuse color as it is pure metal
+    vec4 diffuse = diffColor;
+    
+    // Roughness
+    const float minRoughness = 1e-4;
+    float roughnessAA = max( roughness, /*0.05*/minRoughness );
+    roughnessAA = adjustRoughness( roughnessAA, Normal );
+    float linearRoughness = roughnessAA * roughnessAA;
+    
+    // Occlusion
+    float occlusion = 1.0f;
+    occlusion = rgbMap.z;
+    occlusion = occlusion * occlusion; // sRGB
+    occlusion = mix( 1.0f, occlusion, fOcclusionAmount );
+    
+#define NEKO_CORRECT_DISNEY_LM
+    // Direct light
+    float diffuseDirect = 0.0f; // Make sure we don't have any diffuse light with metal.
+    
+    // Calculate BDRF model.
+#   if defined( NEKO_BURLEY_LM )
+    diffuseDirect = Burley(NdotL, NdotV, VdotH, roughness);
+#   elif defined( NEKO_ORENNAYAR_LM )
+    diffuseDirect = Diffuse_OrenNayar(linearRoughness, Normal, lightDir, -viewDir, NdotL, NdotV);
+#   elif defined( NEKO_CORRECT_DISNEY_LM )
+    diffuseDirect = Fr_DisneyDiffuse(NdotV, NdotL, NdotH, linearRoughness ) / PI;
+#   endif
+    
+    // Specular based on albedo.
+    vec4 specular = vec4(0.0f); // baseColor
+    // TODO: specular support for PBR workflow ( controls different factors ).
+    specular = _diff;
+    
+    // Compute both terms together.
+    vec4 specularDielectric = vec4( 0.04, 0.04, 0.04, 1.0 );
+    specular = mix( specularDielectric, specular, metallic );
+    
+    // Calculate BSDF.
+    vec4 ComeBack = vec4(0.0);
+    
+    float specularOcclusion = specularOcclusionRoughness(NdotV, occlusion, roughness);
+    
+    // Specular terms.
+    float D = D_GGX( NdotH, linearRoughness );
+    float Vis = V_SmithGGXCorrelated( NdotV, NdotLs, roughnessAA );
+    vec3 F = F_Schlick1( specular.rgb, VdotH  );
+    
+    vec3 specularDirect = (D * Vis * F) / PI;
+    
+    // If Importance sampling - SpecularIBL else Integrate
+    
+    vec4 specularIBL = vec4(IntegrateSpecularIBL( specular.rgb, roughnessAA, Normal, -viewDir, 11.0), 1.0);
+    
+    // Diffuse.
+    vec3 diffuseIBL = evaluateDiffuseIBL(Normal, -viewDir);// IntegrateDiffuseCube( Normal );
+    float diffuseOcclusion = occlusion;
+    
+    // Specular.
+    vec3 specularBRDF = lightColor * (specularDirect + specularIBL.rgb ) * specularOcclusion * mix(vec3(1.0f, 1.0f, 1.0f), specular.rgb, metallic);;
+    specularBRDF *= shadowVal; // ??? shadow gets blurred later, but that hides unneccessary specular highlights.
+    
+    // Diffuse.
+    vec3 diffuseBRDF = (diffuseDirect + (diffuseIBL + lightColor * lightIntensity) * diffuseOcclusion) * diffuse.rgb;
+    
+    // Final computation.
+    ComeBack.rgb = diffuseBRDF;
+    ComeBack.rgb += specularBRDF;
+    
+    // Sun and sky intensity in Lux
+    ComeBack.rgb  *= illuminance;
+    
+    // Compute exposure
+    float currentEV = computeEV100(Aperture, ShutterTime, ISO); // Manual
+    float exposure = convertEV100ToExposer(currentEV);
+    ComeBack  *= exposure;
+    
+    // Emissive highlights
+    vec3 emissiveContrib = clamp(specularBRDF, 0.0f, 32.0f)  * illuminance * exposure;// * shadowVal;
+    emissiveOut.rgb += emissiveContrib;
+    
+    ComeBack.rgb =  accurateLinearToSRGB(ComeBack.rgb);
+    
+    return ComeBack ;
+}
+
+//!  Lens settings.
+uniform int lens_samples = 4;
+uniform float lens_flare_dispersal = 0.4;
+uniform float lens_flare_halo_width = 0.45;
+uniform vec3 lens_chroma_distortion = vec3(0.01, 0.03, 0.05);
+
+//! Threshold preferences.
+uniform float def_threshold = 0.64; //highlight threshold;
+uniform float def_gain = 1.2; //highlight gain;
+
+// Anamorphic glow is in composite now.
+
+//! SSAO settings.
+const int MAX_KERNEL_SIZE = 16;
+
+uniform int uKernelSize;
+uniform vec3 uKernelOffsets[MAX_KERNEL_SIZE];
+uniform float uRadius = 4.2;
+uniform float uPower = 3.0;
+
+//! - -----------------------------------------
+
+#ifdef USE_LENSFLARE
+
+float vignette( in vec2 coords ) {
+    float dist = distance( coords, vec2(0.5, 0.5) );
+    dist = smoothstep( lens_flare_halo_width - 0.2, lens_flare_halo_width, dist );
+    return clamp( dist, 0.0, 1.0 );
+}
+
+vec3 treshold( in sampler2D tex, in vec2 coords ) {
+    vec3 col = texture( tex, coords ).rgb;
+    
+    vec3 lumcoeff = vec3(0.299,0.587,0.114);
+    float lum = dot(col.rgb, lumcoeff);
+    float thresh = max((lum-def_threshold)*def_gain, 0.0);
+    return mix(vec3(0.0),col,thresh);
+}
+
+vec3 textureDistorted( in sampler2D tex, in vec2 sample_center, in vec2 sample_vector, in vec3 distortion ) {
+    vec3 col = vec3(0.0);
+    
+    col.r = treshold(tex, sample_center + sample_vector * distortion.r).r;
+    col.g = treshold(tex, sample_center + sample_vector * distortion.g).g;
+    col.b = treshold(tex, sample_center + sample_vector * distortion.b).b;
+    
+    return col;
+}
+
+#endif
+
+///**
+// *   Restore UV from position.
+// */
+//vec3 GetUV(in vec3 position) {
+//    vec4 pVP = vec4(position, 1.0) * ViewProjection;
+//    pVP.xy = vec2(0.5f, 0.5f) + vec2(0.5f, -0.5f) * pVP.xy / pVP.w;
+//    
+//    return vec3(pVP.xy, pVP.z / pVP.w);
+//}
+
+const int blur_radius = 4; // —Ä–∞–¥–∏—É—Å —Ä–∞–∑–º—ã—Ç–∏—è
+
+uniform mat4 prevViewMatrix;
+
+// Main
+void main()
+{
+    // Pre-preocess sampler.
+    vec4 col = texture( renderedTexture, UV );
+    color = col;
+    emissiveOut = vec4(0.0);
+    
+    // Deferred rendering!
+    float depthScreen = texture( depthTexture, UV ).x;
+    
+    // Scene depth.
+    float depth = depthScreen * 2.0 - 1.0;
+    vec4 projectedPos = vec4( UV * 2.0 - 1.0, depth, 1.0);
+    vec4 sPos = invProjView * projectedPos; // Needs some optimization.
+    // Get current world space position:
+    vec3 current = sPos.xyz / sPos.w;
+    
+    // Generate view space position.
+    vec4 poss = perspectiveInvMatrix * projectedPos;
+    poss /= poss.w;
+    
+    // World normals and light data.
+    // TODO: use stencil masks
+    // 0.8- SSAO/SSDO
+    // 0.7 - Lighting
+    // 1.0 - Light source.
+    vec4 normalAndLight = texture( normalTexture, UV );
+    // PBR texture sampler
+    vec4 pbrData = texture( iblSampler, UV );
+    // .a == 1.0 -> light source ( R G B )
+    // .a == 0.0 -> lighting settings
+    vec4 emissiveData = texture( emissiveSampler, UV );
+    
+    
+    // 1.0 is a maximum depth.
+    // So things like sky and clouds should not be affected.
+    
+    if( depthScreen == 1.0 )
+    {
+        // Lens and another onscreen effects are done in composite.
+        color = col;
+        emissiveOut.a = 1.0;
+    }
+    else
+    {
+        // Extract normals.
+        vec3 normal = normalize( decode(normalAndLight) );// * 2.0 - 1.0;
+        
+        // Add shadows.
+        vec4 lod;
+        float shadowCoef = cuteshadows( current, depthScreen, normal, lod );
+        
+        // We don't need SSAO on some surfaces such as water, etc..
+        normal = normalize(normal); // Normalizing normals which we're using for lighting and such.
+        
+        // Generate random sampler.
+        vec2 vRandTexCoord = vec2(UV) / vec2(WIDTH, HEIGHT) * vec2(16.0,16.0);
+        vec3 rvec = texture(noiseTex, vRandTexCoord).xyz * 2.0 - 1.0;
+        
+        // World position texture.
+        vec3 worldPos = current.xyz;
+        
+        vec3 sunToCam =  ((worldPos - lightDirectionAndTime.xyz) - cameraPosition) - vec3(128.0);
+        
+        //! Apply fog smoothing.
+        float fogAmount = 1.0 - exp( -length(sunToCam) );
+        float sunAmount = max( dot( normalize(sunToCam), normalize(lightDirectionAndTime.xyz)  ), 0.0 );
+        vec3  fogColor  = mix( vec3( 0.6, 0.625, 0.7 ), mSkyColor, sunAmount / 1.1 );
+        
+        // Sun rays.
+#ifdef USE_SUNRAYS
+        
+        vec4 sunRays = vec4( 0.0 );
+        vec2 texCoord = UV; // Save texture coordinates.
+        
+        vec2 deltaTextCoord = vec2( texCoord - lightPositionOnScreen.xy );
+        deltaTextCoord *= 1.0 / float( NUM_SAMPLES ) * density;
+        
+        float illuminationDecay = 1.0;
+        
+        int center = (NUM_SAMPLES - 1)/2;
+        const float blurScale = 0.002;
+        const float weight = 0.49;
+        
+        texCoord -= deltaTextCoord*center*blurScale;
+        
+        for( int i = 0; i < NUM_SAMPLES; ++i )
+        {
+            texCoord -= deltaTextCoord;
+            
+            vec4 lightsAmount = texture( emissiveSampler, texCoord );
+            
+            vec4 dsample = lightsAmount * lightsAmount.a * vec4( 0.1 );
+            
+            
+            dsample *= illuminationDecay * weight;
+            sunRays += dsample;
+            
+            illuminationDecay *= decay;
+        }
+        
+        sunRays *= vec4(mSkyColor, 1.0) * exposure;
+        
+        
+        
+        
+#endif // Sun rays.
+        
+        // Apply lighting.
+        // Lightmass texture must be clear color'd by black background color.
+        vec4 cols = vec4(0.0);
+        
+        // Could be replaced by ... ah nevermind.
+        
+        // Apply world lighting by using different light models.
+        // ( gets defined in engine core )
+        if( pbrData.w > 0.6 ) {
+            // TODO: ifdefs
+            vec4 srgbColor = vec4(1.0);
+            srgbColor.rgb = accurateSRGBToLinear( color.rgb );
+            vec4 srgbRMAColor = vec4(1.0);
+            srgbRMAColor.rgb = accurateSRGBToLinear( pbrData.rgb );
+            
+            cols = env( normal, srgbColor, srgbRMAColor, current.xyz, shadowCoef );
+        } else {
+            cols = color;
+            cols.a = 1.0;
+        }
+        
+        /**     Caustic effects.        **/
+        // Using this shader to simulate volumetric caustics and underwater effects.
+        
+        // Apply another processing stages.
+        //        if( normalAndLight.w > 0.7 )
+        //        {
+        //        
+        //            // gram-schmidt
+        //            vec3 tangent = normalize(rvec - normal * dot(rvec, normal));
+        //            vec3 bitangent = cross(normal, tangent);
+        //            mat3 tbn = mat3(tangent, bitangent, normal);
+        //            
+        //            vec4 occlusion = vec4(0.0);
+        //        
+        //        
+        //        float ao = 0.0f;
+        //        float aoSkylight	= 0.0f;
+        //        float aoUp  		= 0.0f;
+        //        float aoBounced  	= 0.0f;
+        //        float aoScattered  	= 0.0f;
+        //        
+        //        
+        //        float aoRadius   = 0.35f * -poss.z;
+        //        //aoRadius   = 3.0f;
+        //        float zThickness = 0.35f * -poss.z;
+        //        zThickness = 6.0f;
+        //
+        //        vec3 	samplePosition 		= vec3(0.0f);
+        //        float 	intersect 			= 0.0f;
+        //        vec4 	sampleScreenSpace 	= vec4(0.0f);
+        //        float 	sampleDepth 		= 0.0f;
+        //        float 	distanceWeight 		= 0.0f;
+        //        float 	finalRadius 		= 0.0f;
+        //        
+        //        float skylightWeight = 0.0f;
+        //        float bouncedWeight  = 0.0f;
+        //        float scatteredUpWeight = 0.0f;
+        //        float scatteredSunWeight = 0.0f;
+        //        vec3 bentNormal = vec3(0.0f);
+        //        vec3 upVector = vec3(0.0, 0.0, 1.0);
+        //        
+        //            for (int i = 0; i < uKernelSize; i++)
+        //            {
+        //                vec3 samples = (tbn * uKernelOffsets[i]) * uRadius;
+        //                samples = samples + poss.xyz;
+        //                
+        //                intersect = dot(normalize(samples - poss.xyz), normal);
+        //                if( intersect > 0.2f ) {
+        //                    
+        //                    vec4 offset = vec4(samples, 1.0);
+        //                    offset = projectionMatrix * offset;
+        //                    offset /= offset.w;
+        //                    offset.xyz = offset.xyz * 0.5 + 0.5;
+        //                    
+        //                    float sampleDepth = texture(depthTexture, offset.xy).x;
+        //                    //If point is behind geometry, buildup AO
+        //                    if (sampleDepth >= samples.z)
+        //                    {
+        //                        //Reduce halo
+        //                        float sampleLength = length(samples - poss.xyz) * 4.0f;
+        //                        //distanceWeight = 1.0f - clamp(distance(sampleDepth, origin.z) - (sampleLength * 0.5f), 0.0f, sampleLength * 0.5f) / (sampleLength * 0.5f);
+        //                        distanceWeight = 1.0f - step(sampleLength, distance(sampleDepth, poss.z));
+        //                        //Weigh samples based on light direction
+        //                        skylightWeight 			= clamp(dot(normalize(samples - poss.xyz), upVector)		* 1.0f - 0.0f , 0.0f, 0.01f) / 0.01f;
+        //                        bouncedWeight 			= clamp(dot(normalize(samples - poss.xyz), -lightDirectionAndTime.xyz)	* 1.0f - 0.0f , 0.0f, 0.51f) / 0.51f;
+        //                        scatteredUpWeight 		= clamp(dot(normalize(samples - poss.xyz), -upVector)	 	* 1.0f - 0.0f , 0.0f, 0.51f) / 0.51f;
+        //                        scatteredSunWeight 		= clamp(dot(normalize(samples - poss.xyz), lightDirectionAndTime.xyz)	* 1.0f - 0.25f, 0.0f, 0.51f) / 0.51f;
+        //                        
+        //                        //buildup occlusion more for further facing surfaces
+        //                        skylightWeight 			/= clamp(dot(normal, upVector) 			* 0.5f + 0.501f, 0.01f, 1.0f);
+        //                        bouncedWeight 			/= clamp(dot(normal, -lightDirectionAndTime.xyz) 		* 0.5f + 0.501f, 0.01f, 1.0f);
+        //                        scatteredUpWeight 		/= clamp(dot(normal, -upVector) 		* 0.5f + 0.501f, 0.01f, 1.0f);
+        //                        scatteredSunWeight 		/= clamp(dot(normal, lightDirectionAndTime.xyz) 		* 0.75f + 0.25f, 0.01f, 1.0f);
+        //
+        //                        
+        //                        
+        //                        //Accumulate ao
+        //                        ao 			+= 2.0f * distanceWeight;
+        //                        aoSkylight  += 2.0f * distanceWeight * skylightWeight		;
+        //                        aoUp 		+= 2.0f * distanceWeight * scatteredUpWeight	;
+        //                        aoBounced 	+= 2.0f * distanceWeight * bouncedWeight		;
+        //                        aoScattered += 2.0f * distanceWeight * scatteredSunWeight   ;
+        //                        
+        ////                        vec4 throwaway = vec4(offset.xy, sampleDepth, 1.0);
+        ////                        throwaway.xyz = throwaway.xyz * 2.0 - 1.0;
+        ////                        throwaway = perspectiveInvMatrix * throwaway;
+        ////                        throwaway /= throwaway.w;
+        ////                        
+        ////                        if (throwaway.z >= samples.z)
+        ////                        {
+        ////                            float rangeCheck = (abs(poss.z - throwaway.z) < uRadius) ? 1.0 : 0.0;
+        ////                            occlusion += (1.0 * rangeCheck);// * (vec4(1.0) - texture( renderedTexture, offset.xy ));
+        ////                        }
+        //                        
+        //                    } else {
+        //                        bentNormal.rgb += normalize(samples - poss.xyz);
+        //                    }
+        //                }
+        //            }
+        //
+        //        float numSamples = float(uKernelSize);
+        //        bentNormal.rgb /= numSamples;
+        //        
+        //        ao 			/= numSamples;
+        //        aoSkylight  /= numSamples;
+        //        aoUp 		/= numSamples;
+        //        aoBounced 	/= numSamples;
+        //        aoScattered /= numSamples;
+        //        
+        //        ao 			= 1.0f - ao;
+        //        aoSkylight 	= 1.0f - aoSkylight;
+        //        aoUp 		= 1.0f - aoUp;
+        //        aoBounced   = 1.0f - aoBounced;
+        //        aoScattered = 1.0f - aoScattered;
+        //        
+        //        ao 			= clamp(ao, 			0.0f, 1.0f);
+        //        aoSkylight 	= clamp(aoSkylight, 	0.0f, 1.0f);
+        //        aoUp 		= clamp(aoUp, 			0.0f, 1.0f);
+        //        aoBounced 	= clamp(aoBounced,		0.0f, 1.0f);
+        //        aoScattered = clamp(aoScattered, 	0.0f, 1.0f);
+        
+        
+        
+        
+        //        cols.rgb = vec3(1.0);//vec3(pow(aoSkylight, 2.0f) * clamp((dot(normal, upVector) * 0.75f + 0.25f), 0.0f, 1.0f));
+        //            occlusion = vec4(1.0) - (occlusion / vec4(uKernelSize));
+        //            occlusion = pow( occlusion, vec4(uPower) );
+        //            
+        //            cols.rgb  = occlusion.rgb;
+        //        }
+        
+        
+        // At this stage shadow sampler is processed.
+        //        cols.rgb = (shadow_ambient * shadowCoef * cols.rgb + (1.0 - shadow_ambient) * cols.rgb);
+        emissiveOut.a = shadowCoef;
+        //        cols.rgb = shadowCoef * lod.rgb;
+        
+        //        // Lightmass texture.
+        //        cols += texture( lightTexture, UV );
+        
+        // Screen space local reflections implementation.
+        //        vec3 viewDir = normalize( current.xyz - cameraPosition );
+        //        vec3 reflectDir = normalize( reflect( viewDir, normal ) );
+        //
+        //        vec3 currentRay = vec3(0.0);
+        //        vec3 nuv = vec3(0.0);
+        //        float L = 0.;
+        //
+        //        for( int i = 0; i < 10; ++i )
+        //        {
+        //            currentRay = current.xyz * reflectDir * L;
+        //            nuv = GetUV( currentRay );
+        //            float n = ld( texture(depthTexture, nuv.xy).x );
+        //
+        //            vec4 projectedPos = vec4( nuv.xy * 2.0 - 1.0, n, 1.0);
+        //            vec4 newPosition = invProjView * projectedPos; // Needs some optimization.
+        //            L = length( current.xyz - newPosition.xyz );
+        //        }
+        //
+        //        cols *= texture( renderedTexture, nuv.xy ).rgb;
+        
+        /***********************************************
+         
+         Note
+         Do postprocess effects in composite shader.
+         
+         ***********************************************/
+        
+        vec4 finalcol = cols;
+        
+        
+        // Add sunful rays.
+#ifdef USE_SUNRAYS
+        finalcol += sunRays;
+#endif
+        
+        // Well done.
+        color = finalcol;
+        
+        // Apply global world fog which is physically correct.
+        float startY = clamp( cameraPosition.y, fogBotHeight, fogTopHeight );   // Fog start height value.
+        float endY = clamp( worldPos.y, fogBotHeight, fogTopHeight );           // Fog end height value.
+        
+        float startInten = fogBotInten + (startY - fogBotHeight) * fogSlope;        // Intensity.
+        float endInten = fogBotInten + (endY - fogBotHeight) * fogSlope;
+        
+        worldPos -= cameraPosition; // Follow the player camera.
+        
+        float dy = worldPos.y / length( worldPos );
+        //        dy = max( dy, 0.00001 );// give it small slope to get intercepts
+        if( dy == 0.0 )
+            dy = 0.00001;
+        
+        // Fog distance.
+        float startDist = (startY - cameraPosition.y) / dy;
+        float endDist = (endY - cameraPosition.y) / dy;
+        
+        float fog = ( abs( endDist - startDist ) ) / fogMaxDist;
+        fog = clamp( fog, 0.0, 1.0 );
+        fog = fog * ( endInten + startInten ) / 1.525;
+        
+        // Main fog base.
+        vec3 baseFog = mix( color.rgb, mGlobalFogColor, fog );
+        //        if( normalAndLight.w > 0.6 ) {
+        color.rgb = baseFog;// * (fogColor * fogAmount );
+        //        }
+        
+        //        float isUnderwater = sign(worldPos.y - 0.0);
+        //        isUnderwater = clamp(isUnderwater, 0.0, 1.0);
+        //        if( isUnderwater == 0.0 ) {
+        //            vec3 watercolor = vec3(0.0225, 0.075, 0.135);
+        //            float log_depth = ld(texture(depthTexture, UV).r) * 1.2;
+        //            float depth_diff = min(log_depth * log_depth, 1.0);
+        //            color.rgb = watercolor * mix(color.rgb, vec3(1.0), depth_diff);
+        //        }
+        
+    }
+    
+#ifdef USE_LENSFLARE
+    vec2 image_center = vec2(0.5);
+    vec2 sample_vector = (image_center - UV) * lens_flare_dispersal;
+    vec2 halo_vector = normalize(sample_vector) * lens_flare_halo_width;
+    
+    vec3 results = textureDistorted( emissiveSampler, UV + halo_vector, halo_vector, lens_chroma_distortion ).rgb;
+    results *= vignette(UV);
+    
+    for (int i = 0; i < lens_samples; ++i)
+    {
+        vec2 offset = sample_vector * float(i);
+        results += textureDistorted( emissiveSampler, UV + offset, offset, lens_chroma_distortion ).rgb;
+    }
+    
+#ifdef USE_LENSANAMORPH
+    vec3 anamorph = vec3(0.0);
+    float s;
+    for( int i = -32; i < 32; ++i ) {
+        s = clamp( 1.0 / abs( float(i) ), 0.0, 1.0 );
+        anamorph += treshold( emissiveSampler, vec2( UV.x + float(i) * ( 1.0 / 64.0 ), UV.y ) ).rgb * s;
+    }
+    //    results *= emissiveData.a;
+    vec3 finalLens = ( results + anamorph * vec3(0.1,0.0,1.0) * 2.5);
+    color += vec4( finalLens * emissiveData.a, 1.0 );
+#else
+    
+    color += vec4( results * emissiveData.a, 1.0 );
+    
+#endif // Lens anamorph.
+    
+#endif // Lens flare.
+    
+    emissiveOut.rgb += emissiveData.rgb; // alpha is used for shadow
+    
+    //    color.a = col.a;
+}
+
+
+#endif//

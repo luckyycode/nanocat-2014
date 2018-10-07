@@ -1,0 +1,193 @@
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  Particle renderer shader.
+//
+
+#ifdef USE_PRECISION
+    precision PRECISION_TYPE float;
+#endif
+
+#ifdef _VERTEX_
+
+layout (location = 0) in vec3 vPosition;
+layout (location = 2) in vec3 vColor;
+layout (location = 3) in float fLifeTime;
+layout (location = 4) in float fSize;
+layout (location = 5) in int iType;
+
+out vec3 vColorPass;
+out float fLifeTimePass;
+out float fSizePass;
+out int iTypePass;
+
+
+void main()
+{
+    gl_Position = vec4( vPosition, 1.0 );
+    vColorPass = vColor;
+    fSizePass = fSize;
+    fLifeTimePass = fLifeTime;
+    iTypePass = iType;
+}
+
+#endif
+
+#ifdef _GEOMETRY_
+
+uniform mat4 MVP;
+uniform vec3 vQuad1, vQuad2;
+
+layout(points) in;
+layout(triangle_strip) out;
+layout(max_vertices = 4) out;
+
+in vec3 vColorPass[];
+in float fLifeTimePass[];
+in float fSizePass[];
+in int iTypePass[];
+
+smooth out vec2 vTexCoord;
+flat out vec4 vColorPart;
+
+out float mDepth;
+smooth out vec2 mPos;
+
+void main()
+{
+    if( iTypePass[0] != 0 )
+    {
+        vec4 vPosOld = gl_in[0].gl_Position;
+        float fSize = fSizePass[0];
+        
+        vColorPart = vec4( vColorPass[0], fLifeTimePass[0] );
+        
+        // Create a quad.
+        vec3 vPos = vPosOld.xyz + (-vQuad1 - vQuad2) * fSize;
+        vTexCoord = vec2( 0.0, 0.0 );
+        
+        gl_Position = MVP * vec4( vPos, 1.0 );
+        
+        mPos = (gl_Position.xy / gl_Position.w + 1.0) / 2.0;
+        mDepth = gl_Position.w;
+        
+        EmitVertex();   // 1st
+        
+        vPos = vPosOld.xyz + (-vQuad1 + vQuad2) * fSize;
+        vTexCoord = vec2( 0.0, 1.0 );
+        gl_Position = MVP * vec4( vPos, 1.0 );
+        
+        mPos = (gl_Position.xy / gl_Position.w + 1.0) / 2.0;
+        mDepth = gl_Position.w;
+        
+        EmitVertex();   // 2nd
+        
+        vPos = vPosOld.xyz + (vQuad1 - vQuad2) * fSize;
+        vTexCoord = vec2( 1.0, 0.0 );
+        
+        gl_Position = MVP * vec4( vPos, 1.0 );
+        
+        mPos = (gl_Position.xy / gl_Position.w + 1.0) / 2.0;
+        mDepth = gl_Position.w;
+        
+        EmitVertex();   // 3rd
+        
+        vPos = vPosOld.xyz + (vQuad1 + vQuad2) * fSize;
+        vTexCoord = vec2( 1.0, 1.0 );
+        
+        gl_Position = MVP * vec4( vPos, 1.0 );
+        
+        mPos = (gl_Position.xy / gl_Position.w + 1.0) / 2.0;
+        mDepth = gl_Position.w;
+        
+        EmitVertex();   // 4th
+        
+        EndPrimitive();
+    }
+}
+
+#endif
+
+#ifdef _FRAGMENT_
+
+uniform sampler2D gSampler;
+uniform sampler2D gDepth;
+
+smooth in vec2 vTexCoord;
+flat in vec4 vColorPart;
+
+smooth in vec2 mPos;
+in float mDepth;
+
+layout(location = 0) out vec4 outColor; // Only one target.
+
+const float power = 2.0;
+
+float Contrast( float d ) {
+    float val = clamp( 2.0 * ( (d > 0.5) ? 1.0 - d : d ), 0.0, 1.0 );
+    float a = 0.5 * pow( val, power );
+    
+    return (d > 0.5) ? 1.0 - a : a;
+}
+
+/**
+ *  Generate calculate linear depth.
+ *
+ *  @param value Depth value.
+ */
+float calculate_linear_depth( float value )
+{
+    return ZFAR * ZNEAR / ( ZFAR - value * (ZFAR - ZNEAR) );
+}
+
+void main()
+{
+    float d = texture( gDepth, mPos.xy ).x; // Scene depth.
+    
+    vec4 vTexColor = texture( gSampler, vTexCoord );
+    if( vTexColor.a < 0.001 ) {
+        discard;
+    }
+    
+#ifdef Z_CLIP
+    d = calculate_linear_depth( d );
+    if( d < mDepth ) discard;
+#endif
+
+    outColor = vTexColor * vColorPart;
+    
+#ifdef SOFT_PARTICLES
+    outColor.a = outColor.a * Contrast( texture( gDepth, mPos.xy ).x - mDepth );
+#endif
+    
+}
+
+
+#endif
+
+

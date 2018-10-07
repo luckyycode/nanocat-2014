@@ -1,0 +1,171 @@
+
+
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL static model shader.
+//
+
+#ifdef USE_PRECISION
+    precision PRECISION_TYPE float;
+#endif
+
+#ifdef _VERTEX_
+
+
+layout(location = 0) in vec3 vertexPosition_modelspace;
+layout(location = 1) in vec2 UV;
+layout(location = 2) in vec3 vertexNormals;
+layout(location = 3) in vec3 instancePosition;
+
+#   if defined( USE_UNIFORM_OBJECTS )
+uniform transform
+{
+    mat4    ModelMatrix, NormalMatrix;
+    mat4    MVP;
+    mat4    prevModelView;
+    float   time;
+} Transform;
+#   else
+struct transform
+{
+    mat4 MVP, ModelMatrix, NormalMatrix;
+    mat4 prevModelView;
+    float time;
+};
+
+uniform transform Transform;
+#   endif
+
+smooth out vec2 mUV;
+
+smooth out vec4 vPosition;
+smooth out vec4 vPrevPosition;
+
+smooth out vec4 vWorld;
+smooth out vec4 vNormal;
+
+smooth out mat3        tangentSpace;
+
+// Binormal and tangent become normal dependant.
+const vec3 xtan = vec3( 0.0, 0.0, 1.0 ); // tangent space for the X aligned plane
+const vec3 xbin = vec3( 0.0, 1.0, 0.0 );
+
+const vec3 ytan = vec3( 1.0, 0.0, 0.0 ); // tangent space for the Y aligned plane
+const vec3 ybin = vec3( 0.0, 0.0, 1.0 );
+
+const vec3 ztan = vec3( 1.0, 0.0, 0.0 ); // tangent space for the Z aligned plane
+const vec3 zbin = vec3( 0.0, 1.0, 0.0 );
+
+void main()
+{
+	mUV = UV;
+
+	vec4 oVertex = vec4( vertexPosition_modelspace + instancePosition, 1.0 ) ;
+    
+    vec4 position = oVertex;
+
+    vPosition = Transform.MVP * position;
+    vPrevPosition = Transform.prevModelView * position;
+    
+    gl_Position = vPosition;
+
+    // inverse transpose!
+	vNormal = Transform.NormalMatrix * vec4(vertexNormals, 0.0);
+    vWorld = Transform.ModelMatrix * position;
+    
+    vec3 n = vNormal.xyz;
+    n *= n;
+    
+    
+    vec4 worldBinormal = vec4( xbin * n.x + ybin * n.y + zbin * n.z, 0.0 ); // Average Binormal.
+    vec4 worldTangent = vec4( xtan * n.x + ytan * n.y + ztan * n.z, 0.0 ); // Average Tangent.
+    
+    // Tangent space.
+    tangentSpace[0]   = vec4(Transform.ModelMatrix  * worldTangent).rgb;
+    tangentSpace[1]   = vec4(Transform.ModelMatrix * worldBinormal).rgb;
+    tangentSpace[2]   = vNormal.rgb;
+}
+
+#endif
+
+#ifdef _FRAGMENT_
+
+uniform float time; // time in seconds
+
+uniform sampler2D decal;
+uniform sampler2D normalMap;
+uniform sampler2D rgbMap;
+
+smooth in vec4 vPosition;
+smooth in vec4 vPrevPosition;
+
+smooth in vec2 mUV;
+
+layout(location = 0) out vec4 color;
+layout(location = 1) out vec4 normalColor;
+layout(location = 2) out vec4 outVisual;
+layout(location = 3) out vec4 outPosition;
+
+smooth in vec4 vWorld;
+smooth in vec4 vNormal;
+
+smooth in mat3        tangentSpace;
+
+// Sphere map
+vec2 encode (vec3 n)
+{
+    vec2 enc = normalize(n.xy) * (sqrt(-n.z*0.5+0.5));
+    enc = enc*0.5+0.5;
+    return enc;
+}
+
+void main() {
+	vec4 decalMap = texture( decal, mUV );
+	if( decalMap.a < 0.5 ) // The answer.
+   		discard;
+
+    vec4 normalMaps = texture( normalMap, mUV );// * 2.0 - 1.0;
+    vec3 knormal =   normalMaps.rgb * tangentSpace ;
+	
+    // PBR texture.
+    vec4 pbr_rgb = texture(rgbMap, mUV);
+    
+	color = vec4( decalMap.rgb, decalMap.a );
+    
+
+    vec2 a = vPosition.xy / vPosition.w;// * 0.5 + 0.5;
+    vec2 b = vPrevPosition.xy / vPrevPosition.w;// * 0.5 + 0.5;
+    vec2 oVelocity = 0.5 * ( a - b );// pow(abs(a - b), vec2(1.0/3.0))*sign(a - b) * 0.5 + 0.5;
+    
+    normalColor = vec4( encode( normalize(knormal + tangentSpace[2]) ), oVelocity.x, oVelocity.y );// vec4(  knormal.x*0.5+0.5, knormal.y*0.5+0.5,knormal.z*0.5+0.5, 1.0 );
+	outVisual = vec4( pbr_rgb.rgb, 1.0 );
+    outPosition = vec4(0.0);
+}
+
+#endif//

@@ -1,0 +1,216 @@
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL composite shader.
+//
+
+#ifdef USE_PRECISION
+precision PRECISION_TYPE float;
+#endif
+
+
+#ifdef _VERTEX_
+
+layout( location = 0 ) in vec3 model_vertexpos;
+//layout( location = 1 ) in vec2 model_uvs;
+
+noperspective out vec2 UV;
+
+void main()
+{
+    //UV = model_uvs;
+    UV = (model_vertexpos.xy + vec2( 1.0, 1.0 )) / 2.0;
+    gl_Position =  vec4( model_vertexpos, 1.0 );
+}
+
+#endif
+
+#ifdef _FRAGMENT_
+
+/***
+ *      Scene composite shader #2.
+ */
+
+//! UV coords.
+noperspective in vec2 UV;
+
+uniform sampler2D renderedTexture;      //! Scene diffuse (albedo) texture. POST-PROCESS.
+uniform sampler2D depthTexture;
+uniform sampler2D lutSampler;   //! HaarmPeterDuikerFilmicToneMapping
+uniform sampler2D emissiveSampler;
+
+uniform sampler2D eyeAdaptationLum;
+
+//! Render target texture out.
+layout( location = 0 ) out vec4 color;
+
+uniform sampler2D uLensColor;
+
+
+uniform float fBloomIntensity;
+
+#define ShoulderStrength   1.00   //[0.00 - 2.00]
+#define LinearStrength   1.00   //[0.00 - 5.00]
+#define LinearAngle   0.50   //[0.00 - 1.00]
+#define ToeStrength   1.00   //[0.00 - 2.00]
+#define ToeNumerator   0.25   //[0.00 - 0.50]
+#define ToeDenominator   1.00   //[0.00 - 2.00]
+#define LinearWhite   11.2   //[0.00 - 20.00]
+
+vec4 Filmic( vec4 colorInput ) {
+    vec4 oricol = colorInput;
+    vec3 Q = oricol.xyz;
+    
+    float A = ShoulderStrength;
+    float B = LinearStrength;
+    float C = LinearAngle;
+    float D = ToeStrength;
+    float E = ToeNumerator;
+    float F = ToeDenominator;
+    float W = LinearWhite;
+    
+    vec3 numerator = ((Q*(A*Q+C*B)+D*E)/(Q*(A*Q+B)+D*F)) - vec3(E/F);
+    vec3 denominator = ((W*(A*W+C*B)+D*E)/(W*(A*W+B)+D*F)) - vec3(E/F);
+    
+    oricol.xyz = numerator / denominator;
+    return oricol;
+}
+
+// HaarmPeterDuikerFilmicToneMapping
+vec3 FilmicToneMapping(in vec3 x)
+{
+    x = max( vec3(0.0f), x - vec3(0.004f) );
+    //return pow( abs( ( x * ( fUpperTone * x + fGreyTone ) ) / ( x * ( fUpperTone  * x + fMiddleTone ) + fLowerTone ) ), 2.2f );
+    // It is already gamma corrected color.
+    return pow( abs( ( x * ( 6.2f * x + 0.5f ) ) / ( x * ( 6.2f * x + 1.7f ) + 0.06 ) ), vec3(2.2f) );
+}
+
+vec4 Linear2Gamma(vec4 color) {
+    return vec4(sqrt(color.r), sqrt(color.g), sqrt(color.b), color.a);
+}
+
+vec4 Gamma2Linear(vec4 color) {
+    return vec4(color.r * color.r, color.g * color.g, color.b * color.b, color.a);
+}
+
+//! Motion blur stuff & things.
+uniform mat4 prevViewProj, invProjView;              //! Previous view projection.
+//#define USE_PEROBJECT_MOTION_BLUR
+float LinearizeDepth(vec2 uv)
+{
+    float n = 0.1;		// camera z near
+    float f = 3000.0;		// camera z far
+    float z = textureLod(renderedTexture, uv, 2.0).x;
+    return (2.0 * n) / (f + n - z * (f - n));
+}
+
+#define LENS_DISTORTION
+#define LENS_DISTORTION_CA
+
+const float scale = 0.9, dispersion = 0.01; //k = 0.2, kcube = 0.3, scale = 0.9, dispersion = 0.01
+void main()
+{
+#   if defined( LENS_DISTORTION )
+    
+#   if defined( LENS_DISTORTION_CA )
+    //index of refraction of each color channel, causing chromatic dispersion
+    vec3 eta = vec3(1.0+dispersion*0.9, 1.0+dispersion*0.6, 1.0+dispersion*0.3);
+#   endif
+    
+    // lens distortion coefficient
+    float k = -0.05;
+    // cubic distortion value
+    float kcube = 0.5;
+    
+    float r2 = (UV.x - 0.5) * (UV.x - 0.5) + (UV.y - 0.5) * (UV.y - 0.5);
+    float f = 0.0;
+    
+    //only compute the cubic distortion if necessary
+    //    if( kcube == 0.0) {
+    f = 1.0 + r2 * k;
+    //    }else{
+    //        f = 1.0 + r2 * (k + kcube * sqrt(r2));
+    //    };
+    
+#   if defined( LENS_DISTORTION_CA )
+    
+    vec2 ruv = (f * eta.r) * scale * (UV.xy - vec2(0.5)) + vec2(0.5);
+    vec2 guv = (f * eta.g) * scale * (UV.xy - vec2(0.5)) + vec2(0.5);
+    vec2 buv = (f * eta.b) * scale * (UV.xy - vec2(0.5)) + vec2(0.5);
+    
+    vec4 inputDistord = vec4( 0.0 );
+    
+    inputDistord.r = textureLod( renderedTexture, ruv, 0 ).r;
+    inputDistord.g = textureLod( renderedTexture, guv, 0 ).g;
+    inputDistord.b = textureLod( renderedTexture, buv, 0 ).b;
+    inputDistord.a = textureLod( renderedTexture, UV, 0 ).a;
+    
+    color = inputDistord;
+
+#   else
+    
+    // get the right pixel for the current position
+    float x = f * (UV.x - 0.5) + 0.5;
+    float y = f * (UV.y - 0.5) + 0.5;
+    vec4 inputDistord = textureLod(renderedTexture,vec2(x,y), 0);
+    
+    color = inputDistord;
+
+#   endif
+    
+#   else   // LENS_DISTORTION
+
+    color = textureLod(renderedTexture, UV, 0);
+    
+    
+#   endif
+    
+//  HaarmPeterDuikerFilmicToneMapping
+//#define log10(x) vec3((1.0 / log(10.0)) * log(x))
+//    vec3 ld = vec3(0.002);
+//    float linReference = 0.18;
+//    float logReference = 444;
+//    float logGamma = 0.45;
+//    vec3 LogColor;
+//    LogColor.rgb = (log10(  0.4*color.rgb/vec3(linReference) )/ld*logGamma + vec3(logReference))/vec3(1023.f);
+//    LogColor.rgb = clamp(LogColor.rgb, vec3(0.0), vec3(1.0));
+//    float FilmLutWidth = 256.0;
+//    float Padding = .5/FilmLutWidth;    //  apply response lookup and color grading for target display
+// 
+//    color.r = texture(lutSampler, vec2( mix(Padding,1.0-Padding,LogColor.r), .5)).r;
+//    color.g = texture(lutSampler, vec2( mix(Padding,1.0-Padding,LogColor.g), .5)).r;
+//    color.b = texture(lutSampler, vec2( mix(Padding,1.0-Padding,LogColor.b), .5)).r;
+//    color.x = texture(lutSampler, vec2(clamp(color.x, 0.0, 1.0),0.0f)).x;
+//    color.y = texture(lutSampler, vec2(clamp(color.y, 0.0, 1.0),0.0f)).y;
+//    color.z = texture(lutSampler, vec2(clamp(color.z, 0.0, 1.0),0.0f)).z;
+ 
+//    color.rgb = FilmPass(color.rgb);
+    float exposure = 1.0 / texture(eyeAdaptationLum, vec2(0.5,0.5)).r;
+    color.rgb = FilmicToneMapping(Gamma2Linear(color * exposure /* exposure */ ).rgb  ) ;
+}
+#endif

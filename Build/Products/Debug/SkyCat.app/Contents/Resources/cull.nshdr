@@ -1,0 +1,205 @@
+
+//
+//  cull.h
+//  Nanocat
+//
+//  Created by Kawaii Neko on 1/26/16.
+//  Copyright © 2016 Neko Vision. All rights reserved.
+//
+
+#ifdef _GEOMETRY_
+
+//#version 400 core
+
+uniform transform {
+    mat4 ModelViewMatrix;
+    mat4 MVPMatrix;
+    vec4 Viewport;
+} Transform;
+
+uniform vec2 LodDistance = vec2( 50.0f, 100.0f );
+
+layout(points) in;
+layout(points, max_vertices = 1) out;
+
+in vec3 InstPos[1];
+in vec3 InstExtent[1];
+flat in int Visible[1];
+
+layout(stream = 0) out vec3 InstPosLOD0;
+layout(stream = 1) out vec3 InstPosLOD1;
+layout(stream = 2) out vec3 InstPosLOD2;
+
+subroutine void LODEmitRoutineType();
+
+subroutine(LODEmitRoutineType)
+void PassThrough() {
+    InstPosLOD0 = InstPos[0];
+    EmitStreamVertex(0);
+}
+
+subroutine(LODEmitRoutineType)
+void DynamicLOD() {
+    float distance = length(Transform.ModelViewMatrix * vec4(InstPos[0], 1.0));
+    if ( distance < LodDistance.x ) {
+        InstPosLOD0 = InstPos[0];
+        EmitStreamVertex(0);
+    } else
+        if ( distance < LodDistance.y ) {
+            InstPosLOD1 = InstPos[0];
+            EmitStreamVertex(1);
+        } else {
+            InstPosLOD2 = InstPos[0];
+            EmitStreamVertex(2);
+        }
+}
+
+subroutine uniform LODEmitRoutineType LODEmitRoutine;
+
+void main() {
+    if ( Visible[0] == 1 ) {
+        LODEmitRoutine();
+    } 
+}
+
+#endif
+
+#ifdef _VERTEX_
+
+//#version 400 core
+
+uniform transform {
+    mat4 ModelViewMatrix;
+    mat4 MVPMatrix;
+    vec4 Viewport;
+} Transform;
+
+uniform vec2 Offset;
+uniform vec3 Extent;
+
+uniform sampler2D HiZBuffer;
+
+vec4 BoundingBox[8];
+
+subroutine int CullRoutineType(vec3 InstPos, vec3 InstExtent);
+
+subroutine(CullRoutineType)
+int PassThrough(vec3 InstPos, vec3 InstExtent) {
+    /* always return 1 */
+    return 1;
+}
+
+subroutine(CullRoutineType)
+int InstanceCloudReduction(vec3 InstPos, vec3 InstExtent) {
+    
+    /* create the bounding box of the object */
+    BoundingBox[0] = Transform.MVPMatrix * vec4( InstPos + vec3( InstExtent.x, InstExtent.y, InstExtent.z), 1.0 );
+    BoundingBox[1] = Transform.MVPMatrix * vec4( InstPos + vec3(-InstExtent.x, InstExtent.y, InstExtent.z), 1.0 );
+    BoundingBox[2] = Transform.MVPMatrix * vec4( InstPos + vec3( InstExtent.x,-InstExtent.y, InstExtent.z), 1.0 );
+    BoundingBox[3] = Transform.MVPMatrix * vec4( InstPos + vec3(-InstExtent.x,-InstExtent.y, InstExtent.z), 1.0 );
+    BoundingBox[4] = Transform.MVPMatrix * vec4( InstPos + vec3( InstExtent.x, InstExtent.y,-InstExtent.z), 1.0 );
+    BoundingBox[5] = Transform.MVPMatrix * vec4( InstPos + vec3(-InstExtent.x, InstExtent.y,-InstExtent.z), 1.0 );
+    BoundingBox[6] = Transform.MVPMatrix * vec4( InstPos + vec3( InstExtent.x,-InstExtent.y,-InstExtent.z), 1.0 );
+    BoundingBox[7] = Transform.MVPMatrix * vec4( InstPos + vec3(-InstExtent.x,-InstExtent.y,-InstExtent.z), 1.0 );
+    
+    /* check how the bounding box resides regarding to the view frustum */
+    int outOfBound[6] = int[6]( 0, 0, 0, 0, 0, 0 );
+    
+    for( int i = 0; i < 8; ++i )
+    {
+        if ( BoundingBox[i].x >  BoundingBox[i].w ) outOfBound[0]++;
+        if ( BoundingBox[i].x < -BoundingBox[i].w ) outOfBound[1]++;
+        if ( BoundingBox[i].y >  BoundingBox[i].w ) outOfBound[2]++;
+        if ( BoundingBox[i].y < -BoundingBox[i].w ) outOfBound[3]++;
+        if ( BoundingBox[i].z >  BoundingBox[i].w ) outOfBound[4]++;
+        if ( BoundingBox[i].z < -BoundingBox[i].w ) outOfBound[5]++;
+    }
+    
+    int inFrustum = 1;
+    
+    for( int i = 0; i < 6; ++i ) {
+        if ( outOfBound[i] == 8 ) {
+            inFrustum = 0;
+        }
+    }
+    
+    return 1;
+}
+
+subroutine(CullRoutineType)
+int HiZOcclusionCull(vec3 InstPos, vec3 InstExtent) {
+    /* first do instance cloud reduction */
+    if ( InstanceCloudReduction(InstPos, InstExtent) == 0 ) {
+        return 0;
+    }
+    
+    /* perform perspective division for the bounding box */
+    for( int i = 0; i < 8; ++i ) {
+        BoundingBox[i].xyz /= BoundingBox[i].w;
+    }
+    
+    /* calculate screen space bounding rectangle */
+    vec2 BoundingRect[2];
+    BoundingRect[0].x = min( min( min( BoundingBox[0].x, BoundingBox[1].x ),
+                                 min( BoundingBox[2].x, BoundingBox[3].x ) ),
+                            min( min( BoundingBox[4].x, BoundingBox[5].x ),
+                                min( BoundingBox[6].x, BoundingBox[7].x ) ) ) / 2.0 + 0.5;
+    BoundingRect[0].y = min( min( min( BoundingBox[0].y, BoundingBox[1].y ),
+                                 min( BoundingBox[2].y, BoundingBox[3].y ) ),
+                            min( min( BoundingBox[4].y, BoundingBox[5].y ),
+                                min( BoundingBox[6].y, BoundingBox[7].y ) ) ) / 2.0 + 0.5;
+    BoundingRect[1].x = max( max( max( BoundingBox[0].x, BoundingBox[1].x ),
+                                 max( BoundingBox[2].x, BoundingBox[3].x ) ),
+                            max( max( BoundingBox[4].x, BoundingBox[5].x ),
+                                max( BoundingBox[6].x, BoundingBox[7].x ) ) ) / 2.0 + 0.5;
+    BoundingRect[1].y = max( max( max( BoundingBox[0].y, BoundingBox[1].y ),
+                                 max( BoundingBox[2].y, BoundingBox[3].y ) ),
+                            max( max( BoundingBox[4].y, BoundingBox[5].y ),
+                                max( BoundingBox[6].y, BoundingBox[7].y ) ) ) / 2.0 + 0.5;
+    /* then the linear depth value of the front-most point */
+    float InstanceDepth = min( min( min( BoundingBox[0].z, BoundingBox[1].z ),
+                                   min( BoundingBox[2].z, BoundingBox[3].z ) ),
+                              min( min( BoundingBox[4].z, BoundingBox[5].z ),
+                                  min( BoundingBox[6].z, BoundingBox[7].z ) ) );
+    
+    /* now we calculate the bounding rectangle size in viewport coordinates */
+    float ViewSizeX = (BoundingRect[1].x - BoundingRect[0].x) * Transform.Viewport.y;
+    float ViewSizeY = (BoundingRect[1].y - BoundingRect[0].y) * Transform.Viewport.z;
+    
+    /* now we calculate the texture LOD used for lookup in the depth buffer texture */
+    float LOD = ceil( log2( max( ViewSizeX, ViewSizeY ) / 2.0 ) );
+    
+    /* finally fetch the depth texture using explicit LOD lookups */
+    vec4 Samples;
+    Samples.x = textureLod( HiZBuffer, vec2(BoundingRect[0].x, BoundingRect[0].y), LOD ).x;
+    Samples.y = textureLod( HiZBuffer, vec2(BoundingRect[0].x, BoundingRect[1].y), LOD ).x;
+    Samples.z = textureLod( HiZBuffer, vec2(BoundingRect[1].x, BoundingRect[1].y), LOD ).x;
+    Samples.w = textureLod( HiZBuffer, vec2(BoundingRect[1].x, BoundingRect[0].y), LOD ).x;
+    
+    float MaxDepth = max( max( Samples.x, Samples.y ), max( Samples.z, Samples.w ) );
+    
+    /* if the instance depth is bigger than the depth in the texture discard the instance */
+    return ( InstanceDepth > MaxDepth ) ? 0 : 1;
+}
+
+subroutine uniform CullRoutineType CullRoutine; 
+
+layout(location = 0) in vec3 InstancePosition;
+//layout(location = 1) in vec3 InstanceScale;
+
+out vec3 InstPos;
+out vec3 InstExtent;
+flat out int Visible;
+
+void main(void) {
+    // Adding 'Offset' is required to keep fine values for mesh data buffers.
+    InstPos.x = InstancePosition.x + Offset.x;
+    InstPos.y = InstancePosition.y;
+    InstPos.z = InstancePosition.z + Offset.y;
+    
+    InstExtent = Extent;
+    
+    Visible = CullRoutine(InstPos, InstExtent);
+}
+
+#endif

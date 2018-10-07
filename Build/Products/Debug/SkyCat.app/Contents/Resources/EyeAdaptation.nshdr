@@ -1,0 +1,185 @@
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL histogram shader.
+//
+
+#ifdef USE_PRECISION
+    precision PRECISION_TYPE float;
+#endif
+
+uniform sampler2D renderedTexture;
+
+uniform float fSize;
+uniform float fLutSize;
+uniform vec2    PhotoPixelCount;
+uniform float fExposureOffset;
+uniform vec4 vCoefs;
+uniform vec4 vMinMaxSpeedDt;
+uniform int iMipLevel;
+
+
+#   if defined( _VERTEX_ )
+
+layout( location = 0 ) in vec3 model_vertexpos;
+layout( location = 1 ) in vec2 model_uvs;
+
+noperspective out vec2 UV;
+noperspective out vec2 UV1;
+
+float HistogramNormalizedIndex(float luminance)
+{
+    return log2(luminance) * vCoefs.x + vCoefs.y;
+}
+
+// Histogram.
+subroutine vec4 CurRoutineActionVert( in vec3 vertex, in vec2 uv );
+
+subroutine(CurRoutineActionVert)
+vec4 HistogramVert( in vec3 vertex, in vec2 uv )
+{
+    vec3 colors = textureLod( renderedTexture, uv, iMipLevel ).xyz;
+    
+    float luminance = max(colors.r, max(colors.g, colors.b));
+    luminance = clamp(luminance, vCoefs.z, vCoefs.w);
+    
+    float nIdx = HistogramNormalizedIndex(luminance);
+    float stepCount = clamp( floor(nIdx * fLutSize), 0.0, fLutSize - 1.0 );
+    
+    return vec4( vertex.x + stepCount * fSize, vertex.y, 0.0, 1.0 );
+}
+
+subroutine(CurRoutineActionVert)
+vec4 DefaultVert( in vec3 vertex, in vec2 uv )
+{
+    return vec4( vertex.xy, 0.0, 1.0 );
+}
+
+subroutine uniform CurRoutineActionVert CurRoutineVert;
+
+void main()
+{
+    UV = model_uvs;
+    UV1 = (model_vertexpos.xy + vec2( 1.0, 1.0 )) / 2.0;
+    
+    vec4 vertex = CurRoutineVert( model_vertexpos, UV);
+    gl_Position = vertex;
+}
+
+#   endif
+
+#   if defined( _FRAGMENT_ )
+
+//! UV coords.
+noperspective in vec2 UV;
+noperspective in vec2 UV1;
+
+//! Render targets.
+layout( location = 0 ) out vec4 color;
+layout( location = 1 ) out vec4 colorPrev;
+
+uniform sampler2D histogramLut;
+uniform sampler2D previousBrightness;
+uniform sampler2D copyTex0;    // 3
+
+#define LUT_SIZE_INT 64
+#define LUT_SIZE_FLOAT 64.0
+
+float LuminanceFromBin( float normHistogramPosition )
+{
+    return exp2((normHistogramPosition - vCoefs.y) / vCoefs.x);
+}
+
+// Histogram.
+subroutine vec4 CurRoutineAction();
+
+subroutine(CurRoutineAction)
+vec4 Default()
+{
+    return vec4(1.0, 0.0, 0.0, 1.0);    // GL_R16F
+}
+
+subroutine(CurRoutineAction)
+vec4 HistogramAnalysis()
+{
+    float average = 0.0;
+    float textureStep = 1.0 / LUT_SIZE_FLOAT;
+    float idx = textureStep * 0.1;
+    float sum = 0.0;
+    float countOver90 = 0.0;
+
+    for( int i = 0; i < LUT_SIZE_INT; ++i ) {
+        float count =  texture( histogramLut, vec2( idx, 0.5 ) ).r;
+        float lastSum = sum;
+        sum += count;
+    
+        if( sum > PhotoPixelCount.x && lastSum < PhotoPixelCount.x ) {
+            float diff = sum - PhotoPixelCount.x;
+            average += diff * LuminanceFromBin(i / LUT_SIZE_FLOAT);
+            countOver90 += diff;
+        } else if( sum > PhotoPixelCount.y && lastSum < PhotoPixelCount.y ) {
+            float diff = PhotoPixelCount.y - lastSum;
+            average += diff * LuminanceFromBin(i / LUT_SIZE_FLOAT);
+            countOver90 += diff;
+        } else if( sum > PhotoPixelCount.x && sum < PhotoPixelCount.y ) {
+            average += count * LuminanceFromBin(i / LUT_SIZE_FLOAT);
+            countOver90 += count;
+        }
+        
+        idx += textureStep;
+    }
+    
+    float previousBrightness = texture( previousBrightness, vec2(0.5, 0.5) ).r;
+    float targetBrightness = clamp( (average / countOver90) + fExposureOffset, 0.0, 65000.0 );
+    
+    float delta = targetBrightness - previousBrightness;
+    float speed = (delta > 0.0) ? vMinMaxSpeedDt.z : vMinMaxSpeedDt.w;
+    float mul = 1.0f - exp2(-speed);
+    float currentBrightness =  mul * delta + previousBrightness;
+    
+    return vec4( clamp( currentBrightness, vMinMaxSpeedDt.x, vMinMaxSpeedDt.y), 0.0, 0.0, 1.0 );    // GL_R16F
+}
+
+subroutine(CurRoutineAction)
+vec4 Copy()
+{
+    color = textureLod( copyTex0, UV1, 0 );//texture( _CopyTex1, UV1 );
+    colorPrev = textureLod( copyTex0, UV1, 0 );
+    
+    return color;
+}
+
+subroutine uniform CurRoutineAction CurRoutine;
+
+void main()
+{
+    colorPrev = vec4(1.0);
+    color = CurRoutine();
+}
+#endif
+

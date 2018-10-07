@@ -1,0 +1,439 @@
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL skyscatter shader.
+//
+
+//  Based on Sean O'Neil's GPU atmospheric scatetring algorithm.
+
+#ifdef USE_PRECISION
+    precision PRECISION_TYPE float;
+#endif
+
+uniform vec3 v3CameraPos;			//! The camera's current position.
+uniform vec3 v3LocalSunLightDir;	//! The direction vector to sun light.
+uniform vec3 v3LocalMoonLightDir;	//! The direction vector to moon light.
+
+uniform float fScaleDepth;			//! The scale depth (i.e. the altitude at which the atmosphere's average density is found).
+
+uniform vec3 vSunSkyColor;
+
+float scale(float fCos)
+{
+    float x = 1.0 - fCos;
+    return fScaleDepth * exp(-0.00287 + x * (0.459 + x * (3.83 + x * (-6.80 + x * 5.25))));
+}
+
+#ifdef _VERTEX_
+
+layout(location = 0) in vec3 inPosition;
+
+uniform vec3 v3InvWavelength;		// 1 / pow(wavelength, 4) for the red, green, and blue channels.
+uniform float fCameraHeight;		// The camera's current height.
+uniform float fOuterRadius;			// The outer (atmosphere) radius.
+uniform float fOuterRadius2;		// fOuterRadius^2
+uniform float fInnerRadius;			// The inner (planetary) radius.
+uniform float fInnerRadius2;		// fInnerRadius^2
+uniform vec3 fKrESun;				// Kr * ESun
+uniform float fKmESun;				// Km * ESun
+uniform float fKr4PI;				// Kr * 4 * PI
+uniform float fKm4PI;				// Km * 4 * PI
+uniform float fScale;				// 1 / (fOuterRadius - fInnerRadius)
+uniform float fScaleOverScaleDepth;	// fScale / fScaleDepth
+
+uniform float Samples;  // Not an integer, no need to cast back then.
+
+uniform mat4 MVP;
+uniform vec3 sunPosition;
+uniform mat4 ModelMatrix;
+
+smooth out vec3 v3DirectionNorm;
+smooth out vec3 vOutScatter;
+smooth out vec3 vInScatter;
+smooth out vec4 mWorldPos;
+
+void main( void )
+{
+    // Get the ray from the camera.
+    vec3 dir = normalize(inPosition);
+    dir.y = max( 0.0, dir.y );
+    
+    // Normalize.
+    float fFar =  sqrt(fOuterRadius2 + fInnerRadius2 * dir.y * dir.y - fInnerRadius2) - fInnerRadius * dir.y;
+    
+    // Ray starting position.
+    vec3 v3Start = vec3(0.0, fInnerRadius + fCameraHeight, 0.0);
+    float fDepth = exp( fScaleOverScaleDepth * ( - fCameraHeight) );
+    
+    float fStartAngle = dot( dir, v3Start ) / (fInnerRadius + fCameraHeight);
+    float fStartOffset = fDepth * scale( fStartAngle );
+    
+    // Scattering.
+    float fSampleLength = fFar / Samples;
+    float fScaledLength = fSampleLength * fScale;
+    
+    vec3 v3SampleRay = dir * fSampleLength;
+    vec3 v3SamplePoint = v3Start + v3SampleRay * 0.5;
+    
+    
+    // Now loop through the sample rays
+    vec3 sunColor = vec3(0.0, 0.0, 0.0);
+    
+    for( int i = 0; i < int(Samples); i++ )
+    {
+        float fHeight = length( v3SamplePoint );
+        float invHeight = 1.0 / fHeight;
+        
+        float fDepth = exp( fScaleOverScaleDepth * ( fInnerRadius - fHeight ) );
+        
+        
+        float fLightAngle = dot( v3LocalSunLightDir, v3SamplePoint ) * invHeight;
+        float fCameraAngle = dot( dir, v3SamplePoint ) * invHeight;
+        float fScatter = ( fStartOffset + fDepth * ( scale( fLightAngle ) - scale( fCameraAngle ) ) );
+        
+        vec3 v3Attenuate = vec3( exp( -fScatter * ( v3InvWavelength * fKr4PI + fKm4PI ) ) );
+        
+        sunColor += v3Attenuate * (fDepth * fScaledLength);
+        v3SamplePoint += v3SampleRay;
+    }
+    
+    
+    // Mie and Rayleigh colors.
+    vOutScatter = vSunSkyColor * sunColor * fKmESun;
+    vInScatter = vSunSkyColor * sunColor * fKrESun;
+    
+    gl_Position = MVP * vec4(inPosition, 1.0);
+    
+    v3DirectionNorm = dir;
+    
+    // UVs
+    mWorldPos = vec4(inPosition, 1.0);
+
+}
+#endif
+
+#ifdef _FRAGMENT_
+
+// TODO: define me in engine core!
+#define PI 3.14159265358979323846
+
+
+uniform sampler2D fNoiseTex;        //! 3d noise texture.
+
+uniform vec3 eyePos;
+uniform vec4 ambientColorAndfTime;
+
+uniform vec3 vSunCloudColor;
+uniform vec3 vMoonCloudColor;
+
+uniform vec3 vMoonSkyColor;
+uniform vec3 vMoonHaloColor;
+uniform float fMoonHaloPower;
+
+uniform vec3 kBetaMie;
+
+uniform vec3 vFogColor;
+uniform float fFogginess;
+
+uniform float fCoverage, fDensity;
+uniform float fContrast, fBrightness;
+
+uniform float fCloudBrightness;
+
+uniform float g;
+uniform float g2;
+
+smooth in vec3 v3DirectionNorm;
+smooth in vec3 vOutScatter;      // Sun color.
+smooth in vec3 vInScatter;     // Sky color.
+smooth in vec4 mWorldPos;
+
+layout(location = 0) out vec4 mColor;
+layout(location = 1) out vec4 outNormal; // I don't really need this.
+layout(location = 2) out vec4 outRMA;   // I don't really need this.
+layout(location = 3) out vec4 outEmissive; // But this is very important, pass sun light thru this.
+
+#if defined( USE_CLOUDS )
+
+/**
+ *  Get 3d noise position from its texture.
+ */
+const float noiseLutScale = 12.0f;
+float Get3DNoise(in vec3 pos)
+{
+//    pos.z += 0.0f;
+    
+    // Better texture filtering.
+    vec3 p = floor(pos);
+    vec3 f = fract(pos);
+    
+    vec2 uv =  (p.xy + p.z * vec2(noiseLutScale)) + f.xy;
+    vec2 uv2 = (p.xy + (p.z + 1.0f) * vec2(noiseLutScale)) + f.xy;
+    
+    vec2 coord =  (uv  + 0.5f) / 128.0;
+    vec2 coord2 = (uv2 + 0.5f) / 128.0;
+    
+    float xy1 = texture(fNoiseTex, coord).x;
+    float xy2 = texture(fNoiseTex, coord2).x;
+    
+    return mix(xy1, xy2, f.z);
+    //    return pnoise3D(pos);
+}
+
+/**
+ *  Noise clouds coverage.
+ */
+float GetCoverage( in float coverage, in float density, in float clouds )
+{
+    clouds = clamp(clouds - (1.0f - coverage), 0.0f, 1.0f -density) / (1.0f - density);
+    clouds = max(0.0f, clouds * 1.1f - 0.1f);
+    
+    return clouds;
+}
+
+const float fCloudScale = 8.0f;
+
+/**
+ *  Calculate proper cloud position.
+ */
+vec3 CloudPosition( vec3 viewDir )
+{
+    float mult = 1.0;// / mix(0.15, 1.0, viewDir.y);
+    return vec3(viewDir.x * mult, viewDir.y, viewDir.z * mult) * 6.0;// * fCloudScale;
+}
+
+/**
+ *  Calculate proper cloud position.
+ */
+vec3 CloudPosition2( vec3 viewDir )
+{
+    float mult = 1.0 / mix(0.15, 1.0, viewDir.y);
+    return vec3(viewDir.x * mult, 1.0, viewDir.z * mult) * 6.0;// * fCloudScale;
+}
+
+/**
+ *  Generate sun/moon illuminated clouds.
+ */
+vec4 CloudColor(in vec4 worldPosition, in float sunglow, in vec3 worldLightVector)
+{
+    float cloudHeight = 0.1f;
+    float cloudDepth  = 30.0f;
+    
+    float cloudUpperHeight = cloudHeight + (cloudDepth / 2.0f);
+    float cloudLowerHeight = cloudHeight - (cloudDepth / 2.0f);
+    
+    vec3 p = CloudPosition(worldPosition.xyz);  // + CloudOffset + CloudWind
+    
+    // Time.
+    float t = ambientColorAndfTime.w * 0.7;
+    p.x += t;
+    
+    
+    const vec4 stepsize = vec4(0.0, 1.0, 2.0, 3.0) * 2.0;
+    
+    vec3 p1 = p * vec3(1.0f, 0.5f, 1.0f) + vec3(0.0f, t * 0.01f, 0.0f);
+    float noise = Get3DNoise(p * vec3(1.0f, 0.5f, 1.0f) + vec3(0.0f, t * 0.01f, 0.0f));
+    p *= stepsize.y;
+    
+    vec3 p2 = p;
+    noise += (1.0f - abs(Get3DNoise(p) * 1.0f - 0.0f)) * 0.95f;
+    p *= stepsize.z;
+    
+    vec3 p3 = p;
+    noise += (1.0f - abs(Get3DNoise(p) * 3.0f - 1.2f)) * 0.015f;
+    p *= stepsize.w;
+    
+    vec3 p4 = p;
+    noise += (1.0f - abs(Get3DNoise(p) * 3.0f - 1.5f)) * 0.05f;
+    p *= 2.5f;
+    
+    noise += (1.0 - abs(Get3DNoise(p) * 2.0 - 1.0)) * 0.015f;
+    p *= 2.5f;
+
+    noise /= 1.875f;
+    
+    const float rainStrength = 0.0;
+    const float lightOffset = 0.325f;
+    
+    float heightGradient = clamp(( -(cloudLowerHeight - worldPosition.y) / cloudDepth), 0.0f, 1.0f);
+    float heightGradient2 = clamp(( -(cloudLowerHeight - (worldPosition.y + worldLightVector.y * lightOffset * 128.0f)) / cloudDepth), 0.0f, 1.0f);
+    
+    float cloudAltitudeWeight = 1.0f - clamp(distance(worldPosition.y, cloudHeight) / (cloudDepth / 2.0f), 0.0f, 1.0f);
+    cloudAltitudeWeight = (-cos(cloudAltitudeWeight * PI)) * 0.5 + 0.5;
+    
+//    float cloudAltitudeWeight2 = 1.3;//.950f;
+    float cloudAltitudeWeight2 = 1.0f - clamp(distance(worldPosition.y + worldLightVector.y * lightOffset * 150.0f, cloudHeight) / (cloudDepth / 2.0f), 0.0f, 1.0f);
+    cloudAltitudeWeight2 = (-cos(cloudAltitudeWeight2 * 3.1415f)) * 0.5 + 0.5;
+    cloudAltitudeWeight2 = pow(cloudAltitudeWeight2, mix(0.33f, 0.8f, rainStrength));
+    
+    
+    noise *= cloudAltitudeWeight;
+    
+    //cloud edge
+    float coverage = fCoverage;
+    float density = fDensity;
+    
+//    float dist = length(worldPosition.xy - eyePos.xz);
+//    coverage *= max(0.0f, 1.0f - dist / 4000.0f);
+    
+    noise = GetCoverage(coverage, density, noise);
+
+//    noise = noise * noise * (3.0f - 2.0f * noise);    // cubic smooth
+    
+    // Cloud illumination.
+    float sundiff = Get3DNoise(p1 + worldLightVector.xyz * lightOffset);
+//    sundiff += Get3DNoise(p2 + worldLightVector.xyz * lightOffset / 2.0f) * 0.15f;
+    sundiff += (1.0 - abs(Get3DNoise(p2 + worldLightVector.xyz * lightOffset / 2.0f) * 1.0f - 0.5f) - 0.1) * 0.55f;
+    
+    float largeSundiff = sundiff;
+    largeSundiff = -GetCoverage(coverage, 0.0f, largeSundiff);
+    
+    sundiff += Get3DNoise(p3 + worldLightVector.xyz * lightOffset / 6.0f) * 0.045f;
+    sundiff += Get3DNoise(p4 + worldLightVector.xyz * lightOffset / 8.0f) * 0.015f;
+    sundiff *= cloudAltitudeWeight2;
+    sundiff = -GetCoverage(coverage, 0.0f /* density * 0.5 */, sundiff);
+    
+    
+    float firstOrder 	= pow(clamp(sundiff + 1.7f, 0.0f, 1.0f), 8.0f);
+    float secondOrder 	= pow(clamp(largeSundiff + 1.1f, 0.0f, 1.0f), 4.0f);
+    
+    float directLightFalloff = mix(firstOrder, secondOrder, 0.225f);
+    float anisoBackFactor = clamp(pow(noise, 2.0f) * 1.5f, 0.0f, 1.0f);
+    
+//    firstOrder *= anisoBackFactor * 0.99 + 0.01;
+//    secondOrder *= anisoBackFactor * 0.8 + 0.2;
+    
+    directLightFalloff *= anisoBackFactor;
+    directLightFalloff *= mix(11.5f, 1.0f, pow(sunglow, 0.05f));
+    directLightFalloff *= 1.0f - rainStrength * 0.9f;
+    
+    
+    float lerpValue = clamp( 1.0 + 4.0 * worldLightVector.y, 0.0, 1.0 ) * clamp( dot(normalize(CloudPosition2(normalize(worldPosition.xyz))), worldLightVector.xyz) + 1.25, 0.0, 1.0 );
+    
+    vec3 cloudCol = mix( vMoonCloudColor, fCloudBrightness * vSunCloudColor, lerpValue );
+    vec3 fogCol = fCloudBrightness * vFogColor;
+    cloudCol = mix( cloudCol, fogCol, fFogginess );
+    
+    vec3 colorBounced = ambientColorAndfTime.rgb;
+	 	 colorBounced *= pow((1.0f - heightGradient), 8.0f);
+	 	 colorBounced *= anisoBackFactor + 0.5;
+	 	 colorBounced *= 1.0 - rainStrength;
+    
+    // Color intensity.
+    vec3 colorSunlight = cloudCol;
+    vec3 colorDirect = cloudCol;
+    colorDirect *= pow(sunglow, 4.0f) * 1200.0f *  pow(firstOrder, 1.1f) * (1.0f - rainStrength);
+
+    vec3 colorAmbient = colorSunlight;
+    colorAmbient = mix(colorAmbient, vec3(0.0), vec3(clamp(pow(1.0f - noise, 2.0f) * 1.0f, 0.0f, 1.0f)));
+    
+    // Final color.
+    vec3 color = mix(colorAmbient, colorDirect, vec3(min(1.0f, directLightFalloff))) +colorBounced;
+    vec4 result = vec4(color, noise);
+    
+    return result;
+}
+
+#endif
+
+// Rayleigh ( sky )
+float RayleighPhase( in float eyecos2 ) {
+    return 0.75 + 0.75 + eyecos2;
+}
+
+// Mie ( sun )
+float MiePhase( in float eyeCos, in float eyeCos2) {
+    return kBetaMie.x * (1.0f + eyeCos2) / pow(kBetaMie.y + kBetaMie.z * eyeCos, 1.5f);
+}
+
+vec3 NightSkyColor( in vec3 dir )
+{
+    dir.y = max(0.0, dir.y);
+    
+    return vMoonSkyColor * (1.0 - 0.75 * dir.y);
+}
+
+vec3 MoonHaloColor( in vec3 dir ) {
+    return vMoonHaloColor * pow(max(0.0, dot(dir, v3LocalMoonLightDir)), fMoonHaloPower );
+}
+
+// UV rotation matrix constructor
+#define ROTATION_UV(angle) mat2x2(cos(angle), -sin(angle), sin(angle), cos(angle))
+//const vec3 sunColorModifier = vec3( 0.35, 0.45, 0.91 );
+//const vec3 sunLightColorModifier = vec3( 0.52, 0.50, 0.35 );
+void main( void )
+{
+    vec3 dir = v3DirectionNorm;
+//    dir.y = max( 0.0, dir.y );
+    
+    float fCos = dot(v3LocalSunLightDir, dir);// / length(v3DirectionNorm);
+    
+    float sunCos2 = fCos * fCos;
+    float fRayleighPhase = RayleighPhase( sunCos2 );
+    float fMiePhase = MiePhase( fCos, sunCos2 );// (1.0 - g2) / (2.0 + g2) * (1.0 + fCos * fCos) / pow(1.0 + g2 - 2.0 * g * fCos, 1.5);
+
+    // Sky color.
+    vec4 skyColor = vec4( (fRayleighPhase * vInScatter) + (fMiePhase * vOutScatter), 1.0 );///*1.0 - exp( -1.5 * (*/ fRayleighPhase * vInScatter + fMiePhase * vOutScatter /*) )*/, 1.0 );
+    
+    // Add moon light.
+    
+    // Moon rayleigh.
+    skyColor.rgb += NightSkyColor( dir );
+    // Moon mie.
+    skyColor.rgb += MoonHaloColor( dir );
+
+    // Output light amount.
+    outEmissive = vec4( fMiePhase * vOutScatter, 1.0 );
+
+    vec4 cloudLayer = vec4(0.0f);
+//    for( int i = 0; i <  1; ++i ) {
+//        cloudLayer += CloudColor(vec4(mWorldPos.x + float(i), mWorldPos.z + float(i), mWorldPos.y+ float(i) + 10.0f, 1.0), 0.25, normalize(v3LocalSunLightDir));
+//    }
+
+    // Add cloud layer to final color out.
+    mColor = skyColor;
+    
+    // Lerp to fog color
+    mColor.rgb = mix(mColor.rgb, vFogColor, fFogginess);
+
+//    // Lerp to ground color
+//    mColor.rgb = mix(mColor.rgb, ambientColorAndfTime.rgb, ground);
+    
+    // Adjust color.
+    mColor.rgb = pow( mColor.rgb * fBrightness, vec3(fContrast) );
+    
+//    //Adjust color from HDR
+//    const float fHdrExposure = 1.125;
+//    mColor = 1.0 - exp(mColor * -fHdrExposure);
+
+    outNormal   = vec4( 0.0, 0.0, 0.0, 0.0 );
+    outRMA = vec4(0.0, 0.0, 0.0, 1.0);
+    //gl_FragDepth = gl_FragCoord.z;
+}
+
+#endif//

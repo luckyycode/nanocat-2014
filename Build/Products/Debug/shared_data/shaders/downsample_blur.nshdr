@@ -1,0 +1,147 @@
+
+//
+//  downsample_blur.nshdr
+//  Nanocat
+//
+//  Created by Kawaii Neko on 2/21/16.
+//  Copyright ¬© 2016 Neko Vision. All rights reserved.
+//
+
+#   if defined( _VERTEX_ )
+//#version 400 core
+
+void main() {
+    /* dummy vertex shader */
+}
+
+#   endif
+
+#   if defined( _FRAGMENT_ )
+
+uniform sampler2D LastMip;
+//uniform ivec2 LastMipSize;
+uniform vec2 vTexelSize = vec2(1.0/ 640.0, 1.0 / 480.0);
+uniform float fBlurSize = 4.0;
+
+out vec4 color;
+
+in vec2 TexCoord;
+
+const float curve[7] = float[7] ( 0.0205, 0.0855, 0.232, 0.324, 0.232, 0.0855, 0.0205 );
+
+// Downsample, Blur vertically, Blur horizontally.
+subroutine vec4 CurRoutineAction();
+
+subroutine(CurRoutineAction)
+vec4 Downsample() {
+    
+    vec4 uv21 = vec4(TexCoord.xy + vTexelSize.xy * vec2(-0.5,-0.5), 0.0, 0.0);
+    vec4 uv22 = vec4(TexCoord.xy + vTexelSize.xy * vec2(0.5,-0.5), 0.0, 0.0);
+    vec4 uv23 = vec4(TexCoord.xy + vTexelSize.xy * vec2(-0.5,0.5), 0.0, 0.0);
+    
+    vec3 color = texture ( LastMip , TexCoord.xy).rgb;
+    color += texture ( LastMip , uv21.xy).rgb;
+    color += texture ( LastMip , uv22.xy).rgb;
+    color += texture ( LastMip , uv23.xy).rgb;
+    
+    return max(vec4(color, 1.0) / 4.0, vec4(0.0));
+}
+
+subroutine(CurRoutineAction)
+vec4 BlurV()
+{
+    vec4 offs = vec4( vTexelSize.xy * vec2(0.0, 1.0) * fBlurSize, 1.0, 1.0 );
+			 
+    vec2 uv = TexCoord.xy;
+    vec2 netFilterWidth = offs.xy;
+    vec2 coords = uv - netFilterWidth * 3.0;
+    
+    vec4 color = vec4(0.0);
+    for( int l = 0; l < 7; l++ )
+    {
+        vec4 tap = texture( LastMip , coords);
+        color += tap * vec4(curve[l], curve[l], curve[l], curve[l]);
+        coords += netFilterWidth;
+    }
+    
+    return color;
+}
+
+subroutine(CurRoutineAction)
+vec4 BlurH()
+{
+    vec4 offs = vec4( vTexelSize.xy * vec2(1.0, 0.0) * fBlurSize, 1.0, 1.0 );
+ 
+    vec2 uv = TexCoord.xy;
+    vec2 netFilterWidth = offs.xy;
+    vec2 coords = uv - netFilterWidth * 3.0;
+    
+    vec4 color = vec4(0.0);
+    for( int l = 0; l < 7; l++ )
+    {
+        vec4 tap = texture( LastMip , coords);
+        color += tap * vec4(curve[l], curve[l], curve[l], curve[l]);
+        coords += netFilterWidth;
+    }
+    
+    return color;
+}
+
+subroutine(CurRoutineAction)
+vec4 Final() {
+    
+    vec4 b0 = textureLod( LastMip , TexCoord, 0);
+    vec4 b1 = textureLod( LastMip , TexCoord, 1);
+    vec3 b2 = textureLod( LastMip , TexCoord, 2).rgb;
+    vec3 b3 = textureLod( LastMip , TexCoord, 3).rgb;
+    vec3 b4 = textureLod( LastMip , TexCoord, 4).rgb;
+    vec3 b5 = textureLod( LastMip , TexCoord, 5).rgb;
+    
+    
+    
+    vec3 bloom = b0.rgb * 0.5f + b1.rgb * 0.8f * 0.75f + b2 * 0.6f + b3 * 0.45f + b4 * 0.35f + b5 * 0.23f;
+    ;
+    
+    bloom /= 2.2;
+    
+    return vec4( bloom, b1.a );
+}
+
+subroutine uniform CurRoutineAction CurRoutine;
+
+void main(void)
+{
+    color = CurRoutine();
+}
+
+#endif
+
+#   if defined( _GEOMETRY_ )
+//#version 400 core
+
+layout(points) in;
+layout(triangle_strip, max_vertices = 4) out;
+
+out vec2 TexCoord;
+
+void main() {
+    gl_Position = vec4( 1.0, 1.0, 0.5, 1.0 );
+    TexCoord = vec2( 1.0, 1.0 );
+    EmitVertex();
+    
+    gl_Position = vec4(-1.0, 1.0, 0.5, 1.0 );
+    TexCoord = vec2( 0.0, 1.0 );
+    EmitVertex();
+    
+    gl_Position = vec4( 1.0,-1.0, 0.5, 1.0 );
+    TexCoord = vec2( 1.0, 0.0 );
+    EmitVertex();
+    
+    gl_Position = vec4(-1.0,-1.0, 0.5, 1.0 );
+    TexCoord = vec2( 0.0, 0.0 );
+    EmitVertex();
+    
+    EndPrimitive();
+}
+
+#   endif

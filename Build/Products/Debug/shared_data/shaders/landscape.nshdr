@@ -1,0 +1,238 @@
+
+
+//
+//          *                  *
+//             __                *
+//           ,db'    *     *
+//          ,d8/       *        *    *
+//          888
+//          `db\       *     *
+//            `o`_                    **
+//         *               *   *    _      *
+//               *                 / )
+//             *    /\__/\ *       ( (  *
+//           ,-.,-.,)    (.,-.,-.,-.) ).,-.,-.
+//          | @|  ={      }= | @|  / / | @|o |
+//         _j__j__j_)     `-------/ /__j__j__j_
+//          ________(               /___________
+//          |  | @| \              || o|O | @|
+//          |o |  |,'\       ,   ,'"|  |  |  |  hjw
+//          vV\|/vV|`-'\  ,---\   | \Vv\hjwVv\//v
+//                     _) )    `. \ /
+//                    (__/       ) )
+//    _   _        _                                _
+//   | \ | |  ___ | | __ ___     ___  _ __    __ _ (_) _ __    ___
+//   |  \| | / _ \| |/ // _ \   / _ \| '_ \  / _` || || '_ \  / _ \
+//   | |\  ||  __/|   <| (_) | |  __/| | | || (_| || || | | ||  __/
+//   |_| \_| \___||_|\_\\___/   \___||_| |_| \__, ||_||_| |_| \___|
+//                                           |___/
+//
+//  OpenGL terrain shader.
+//
+
+#ifdef USE_PRECISION
+    precision PRECISION_TYPE float;
+#endif
+
+#ifdef _VERTEX_
+
+layout(location = 0) in vec3 inPosition;
+//layout(location = 1) in vec2 inCoord;
+layout(location = 1) in vec3 inNormal;
+
+/**
+ *  Matrices.
+ */
+uniform mat4 	ModelMatrix;
+uniform mat4 	MVP;
+uniform mat4    PrevMVP;
+
+smooth out vec4 vPosition;
+smooth out vec4 vPrevPosition;
+
+smooth out mat3        tangentSpace;
+
+/**
+ *  Texture coordinates based on normals.
+ */
+noperspective out vec2 coord1;
+noperspective out vec2 coord2;
+noperspective out vec2 coord3;
+
+out vec4 blend_weights;
+
+// Binormal and tangent become normal dependant.
+const vec3 xtan = vec3( 0.0, 0.0, 1.0 ); // tangent space for the X aligned plane
+const vec3 xbin = vec3( 0.0, 1.0, 0.0 );
+
+const vec3 ytan = vec3( 1.0, 0.0, 0.0 ); // tangent space for the Y aligned plane
+const vec3 ybin = vec3( 0.0, 0.0, 1.0 );
+
+const vec3 ztan = vec3( 1.0, 0.0, 0.0 ); // tangent space for the Z aligned plane
+const vec3 zbin = vec3( 0.0, 1.0, 0.0 );
+
+const float tex_scale = 16.0;
+
+void main()
+{
+	vec4 inPositionScaled = vec4( inPosition, 1.0 );
+
+    vPosition = MVP * inPositionScaled;
+    vPrevPosition = PrevMVP * inPositionScaled;
+    
+    gl_Position = vPosition;
+
+	vec4 vWorldPos = ModelMatrix * inPositionScaled;
+	vec4 vNormal = ModelMatrix * vec4( inNormal, 0.0 );
+
+    if( inPosition.y > 11.0 ) {
+        // Extract normal weights now.
+        blend_weights = abs( vNormal );   // Tighten up.
+        blend_weights = (blend_weights - vec4(0.2)) * 8.0;
+        blend_weights = max(blend_weights, vec4(0.0));      // Force weights to sum to 1.0 (very important!)
+        blend_weights /= vec4(blend_weights.x + blend_weights.y + blend_weights.z /*+ blend_weights.a*/ ).xxxx;
+    }
+    
+    // TODO: WATERLEVEL
+    
+    // Modifier for customization of texture mapping.
+    else {
+        blend_weights.a = 1.0;
+    }
+    
+    // Compute the UV coords for each of the 3 planar projections.
+    coord1 = vWorldPos.yz / tex_scale;
+    coord2 = vWorldPos.zx / tex_scale;
+    coord3 = vWorldPos.xy / tex_scale;
+
+    vec3 n = vNormal.xyz;
+    n *= n;
+    
+
+    vec4 worldBinormal = vec4( xbin * n.x + ybin * n.y + zbin * n.z, 0.0 ); // Average Binormal.
+    vec4 worldTangent = vec4( xtan * n.x + ytan * n.y + ztan * n.z, 0.0 ); // Average Tangent.
+
+    // Tangent space.
+    tangentSpace[0]   = vec4(ModelMatrix  * worldTangent).rgb;
+    tangentSpace[1]   = vec4(ModelMatrix * worldBinormal).rgb;
+    tangentSpace[2]   = vNormal.rgb;
+}
+#endif
+
+#ifdef _FRAGMENT_
+
+/**
+ *  Render targets.
+ */
+layout(location = 0) out vec4 color;
+layout(location = 1) out vec4 normalColor;
+layout(location = 2) out vec4 outVisual;
+layout(location = 3) out vec4 outPosition;
+
+uniform sampler2D mNoiseMap;
+
+uniform sampler2DArray diffuseSamplers;
+uniform sampler2DArray normalSamplers;
+uniform sampler2DArray pbrmapSamplers;
+
+in vec4     blend_weights;
+
+noperspective in vec2     coord1;
+noperspective in vec2     coord2;
+noperspective in vec2     coord3;
+
+smooth in vec4 vPosition;
+smooth in vec4 vPrevPosition;
+
+smooth in mat3     tangentSpace;
+
+//vec3 lerp( vec4 a, vec4 b, float s ) {
+//    return vec3(a + (b - a) * s);
+//}
+
+//// XY
+//vec4 encode (vec3 n) {
+//    return vec4(n.xy*0.5+0.5,0.0,1.0);
+//}
+
+// Sphere map
+vec2 encode (vec3 n)
+{
+    vec2 enc = normalize(n.xy) * (sqrt(-n.z*0.5+0.5));
+    enc = enc*0.5+0.5;
+    return enc;
+}
+
+void main()
+{
+    // This is where you would apply conditional displacement mapping.
+    //if (blend_weights.x > 0) coord1 = . . .
+    //if (blend_weights.y > 0) coord2 = . . .
+    //if (blend_weights.z > 0) coord3 = . . .
+    
+    // Sample color maps for each projection, at those UV coords.
+    vec4 col1 = texture( diffuseSamplers, vec3(coord1, 0.0) );
+    vec4 col2 = texture( diffuseSamplers, vec3(coord2, 1.0) );
+    vec4 col3 = texture( diffuseSamplers, vec3(coord3, 2.0) );
+    vec4 col4 = texture( diffuseSamplers, vec3(coord2, 3.0) ); // xy
+    
+    // Sample bump maps too, and generate bump vectors.
+    vec4 bumpFetch1 = texture( normalSamplers, vec3(coord1, 0.0) );
+    vec4 bumpFetch2 = texture( normalSamplers, vec3(coord2, 1.0) );
+    vec4 bumpFetch3 = texture( normalSamplers, vec3(coord3, 2.0) );
+    vec4 bumbFetch4 = texture( normalSamplers, vec3(coord2, 3.0) ); // xy
+    
+    // ...aaand sample pbr maps.
+    vec4 pbrFetch1 = texture( pbrmapSamplers, vec3(coord1, 0.0) );
+    vec4 pbrFetch2 = texture( pbrmapSamplers, vec3(coord2, 1.0) );
+    vec4 pbrFetch3 = texture( pbrmapSamplers, vec3(coord3, 2.0) );
+    vec4 pbrFetch4 = texture( pbrmapSamplers, vec3(coord2, 3.0) ); // xy
+    
+    
+    // Finally, blend the results of the 3 planar projections.
+    vec4 blended_color = col1 * blend_weights.xxxx +
+    col2 * blend_weights.yyyy +
+    col3 * blend_weights.zzzz +
+    col4 * blend_weights.aaaa; // .w holds specular value.
+    
+    // Normal bump.
+    vec3 nrm = ( bumpFetch1.rgb ) * blend_weights.xxx+
+    (bumpFetch2.rgb ) * blend_weights.yyy+
+    ( bumpFetch3.rgb ) * blend_weights.zzz+
+    (bumbFetch4.rgb ) * blend_weights.www;
+
+    // Normal space.
+    vec3 blended_bump_vec = tangentSpace * nrm.xyz ;
+
+    // PBR properties map!
+    vec4 blended_pbrcolor = pbrFetch1 * blend_weights.xxxx +
+    pbrFetch2 * blend_weights.yyyy +
+    pbrFetch3 * blend_weights.zzzz +
+    pbrFetch4 * blend_weights.aaaa; // .w holds specular value.
+    
+//    vec3 v = vec3(0.0);
+//    v += texture( mNoiseMap, vWorldPos.xz/128.0 * 3.97 ).rgb*1.00;
+//    v +=  texture( mNoiseMap, vWorldPos.xz/128.0 * 8.06).rgb*0.50;
+//    v +=  texture( mNoiseMap, vWorldPos.xz/128.0 *15.96).rgb*0.25;
+
+//    vec2 a = (vPosition.xy / vPosition.w) * 0.5 + 0.5;
+//    vec2 b = (vPrevPosition.xy / vPrevPosition.w) * 0.5 + 0.5;
+    
+    vec4 wtf = vPosition ;//* vec4(1.0, -1.0, 1.0, 1.0);
+    vec4 wtf2 = vPrevPosition;// * vec4(1.0, -1.0, 1.0, 1.0);
+    
+    vec2 a = (wtf.xy / wtf.w);// * 0.5 + 0.5;
+    vec2 b = (wtf2.xy / wtf2.w);// * 0.5 + 0.5;
+    vec2 oVelocity = 0.5 * ( a-b );// pow(abs(a - b), vec2(1.0/3.0))*sign(a - b) * 0.5 + 0.5;
+    
+    // Generate normals.
+    vec3 knormal = normalize(tangentSpace[2] + blended_bump_vec /*+ v */);
+    normalColor = vec4( encode(knormal), oVelocity.x, oVelocity.y ) ;//vec4( knormal.x * 0.5 + 0.5, knormal.y * 0.5 + 0.5, knormal.z * 0.5 + 0.5, 1.0 );
+    
+    color = vec4( blended_color );
+    outVisual = vec4(blended_pbrcolor.rgb, 1.0);//vec4( 0.01, .07, 1.0, 0.0 );
+
+    outPosition = vec4(0.0);
+}
+
+#endif
