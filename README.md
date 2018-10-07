@@ -32,5 +32,6 @@ what that stuff got so far:
 19. multi-passthru shaders
 20. gpu particle engine
 21. road builder
+22. hi-z culling
 
 you can find all shaders in /Build/Debug/Products/shared_data/
